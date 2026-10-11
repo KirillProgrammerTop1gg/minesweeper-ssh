@@ -1,0 +1,10 @@
+[project]
+name = "minesweeper-ssh"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "asyncssh>=2.24.1",
+    "textual>=8.2.8",
+]

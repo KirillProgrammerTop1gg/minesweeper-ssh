@@ -1,11 +1,10 @@
 # Minesweeper Terminal & SSH
 
-Play instantly from any terminal without installing Python:
+Play instantly from any terminal without installing Python (no password needed):
 
 ```bash
 ssh -p 5822 play@minesweeper-ssh.duckdns.org
 ```
-*(Just press **Enter** when prompted for password)*
 
 ---
 

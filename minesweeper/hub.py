@@ -60,7 +60,9 @@ class Match:
         self.mines = mines
 
         all_cells = [(r, c) for r in range(rows) for c in range(cols)]
-        self.preset_mines = set(random.sample(all_cells, mines))
+        safe_start = {(0, 0), (0, 1), (1, 0), (1, 1)}
+        available_cells = [c for c in all_cells if c not in safe_start]
+        self.preset_mines = set(random.sample(available_cells, mines))
 
         self.p1_game = MinesweeperGame(
             rows, cols, mines, difficulty_name="PVP Race", is_pvp=False, preset_mines=set(self.preset_mines)
@@ -90,10 +92,11 @@ class Match:
 
     def _extract_cells(self, game: MinesweeperGame) -> list:
         cells_state = []
+        is_over = game.status in (GameStatus.WON, GameStatus.LOST)
         for r in range(game.rows):
             for c in range(game.cols):
                 cell = game.grid[r][c]
-                if cell.is_revealed or cell.is_flagged or cell.is_detonated or cell.is_false_flag:
+                if cell.is_revealed or cell.is_flagged or cell.is_detonated or cell.is_false_flag or (is_over and cell.is_mine):
                     cells_state.append((
                         r,
                         c,
@@ -102,6 +105,7 @@ class Match:
                         cell.adjacent_mines,
                         cell.is_detonated,
                         cell.is_false_flag,
+                        cell.is_mine if (cell.is_revealed or is_over) else False,
                     ))
         return cells_state
 

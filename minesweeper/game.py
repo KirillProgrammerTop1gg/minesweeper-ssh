@@ -209,10 +209,7 @@ class MinesweeperGame:
 
     def start_if_needed(self, r: int, c: int) -> None:
         if self.status == GameStatus.READY:
-            if self.preset_mines is not None:
-                if self.grid[r][c].is_mine:
-                    self._relocate_mine(r, c)
-            else:
+            if self.preset_mines is None:
                 self._generate_mines(r, c)
             self.status = GameStatus.PLAYING
             self.start_time = time.time()

@@ -17,8 +17,42 @@ class PVPClient:
         self._listener_task: Optional[asyncio.Task] = None
         self.connected = False
 
-        self.on_message: Optional[Callable[[dict], None]] = None
-        self.on_disconnect: Optional[Callable[[], None]] = None
+        self._message_handlers: list[Callable[[dict], None]] = []
+        self._disconnect_handlers: list[Callable[[], None]] = []
+
+    def add_message_handler(self, handler: Callable[[dict], None]) -> None:
+        if handler not in self._message_handlers:
+            self._message_handlers.append(handler)
+
+    def remove_message_handler(self, handler: Callable[[dict], None]) -> None:
+        if handler in self._message_handlers:
+            self._message_handlers.remove(handler)
+
+    def add_disconnect_handler(self, handler: Callable[[], None]) -> None:
+        if handler not in self._disconnect_handlers:
+            self._disconnect_handlers.append(handler)
+
+    def remove_disconnect_handler(self, handler: Callable[[], None]) -> None:
+        if handler in self._disconnect_handlers:
+            self._disconnect_handlers.remove(handler)
+
+    @property
+    def on_message(self) -> Optional[Callable[[dict], None]]:
+        return self._message_handlers[0] if self._message_handlers else None
+
+    @on_message.setter
+    def on_message(self, handler: Optional[Callable[[dict], None]]) -> None:
+        if handler is not None:
+            self.add_message_handler(handler)
+
+    @property
+    def on_disconnect(self) -> Optional[Callable[[], None]]:
+        return self._disconnect_handlers[0] if self._disconnect_handlers else None
+
+    @on_disconnect.setter
+    def on_disconnect(self, handler: Optional[Callable[[], None]]) -> None:
+        if handler is not None:
+            self.add_disconnect_handler(handler)
 
     async def connect(self, timeout: float = 3.0) -> bool:
         try:
@@ -42,16 +76,22 @@ class PVPClient:
                     break
                 try:
                     data = json.loads(line.decode("utf-8").strip())
-                    if self.on_message:
-                        self.on_message(data)
+                    for handler in list(self._message_handlers):
+                        try:
+                            handler(data)
+                        except Exception as e:
+                            logger.error(f"Error in message handler: {e}")
                 except Exception:
                     continue
         except Exception:
             pass
         finally:
             self.connected = False
-            if self.on_disconnect:
-                self.on_disconnect()
+            for handler in list(self._disconnect_handlers):
+                try:
+                    handler()
+                except Exception as e:
+                    logger.error(f"Error in disconnect handler: {e}")
 
     async def send(self, data: dict) -> None:
         if not self.connected or not self.writer or self.writer.is_closing():

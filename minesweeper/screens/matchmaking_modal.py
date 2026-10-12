@@ -77,8 +77,8 @@ class MatchmakingModal(ModalScreen[Optional[dict]]):
                 yield Button("Cancel (Esc)", id="btn_cancel", variant="error")
 
     async def on_mount(self) -> None:
-        self.client.on_message = self._handle_message
-        self.client.on_disconnect = self._handle_disconnect
+        self.client.add_message_handler(self._handle_message)
+        self.client.add_disconnect_handler(self._handle_disconnect)
 
         if not self.client.connected:
             connected = await self.client.connect()
@@ -93,15 +93,24 @@ class MatchmakingModal(ModalScreen[Optional[dict]]):
         )
         await self.client.join_queue(self.my_tag, self.my_nick)
 
+    def on_unmount(self) -> None:
+        self.client.remove_message_handler(self._handle_message)
+        self.client.remove_disconnect_handler(self._handle_disconnect)
+
     def _handle_message(self, msg: dict) -> None:
         mtype = msg.get("type")
         if mtype == "queue_status":
             waiting = msg.get("waiting", 1)
-            self.query_one("#match_status", Label).update(
-                f"Waiting for opponent online... ({waiting} queued)"
-            )
+            try:
+                self.query_one("#match_status", Label).update(
+                    f"Waiting for opponent online... ({waiting} queued)"
+                )
+            except Exception:
+                pass
         elif mtype == "match_start":
             self.match_data = msg
+            self.client.remove_message_handler(self._handle_message)
+            self.client.remove_disconnect_handler(self._handle_disconnect)
             self.dismiss(msg)
 
     def _handle_disconnect(self) -> None:
@@ -113,6 +122,8 @@ class MatchmakingModal(ModalScreen[Optional[dict]]):
             pass
 
     async def action_cancel(self) -> None:
+        self.client.remove_message_handler(self._handle_message)
+        self.client.remove_disconnect_handler(self._handle_disconnect)
         if self.client.connected:
             await self.client.cancel_queue()
         self.dismiss(None)

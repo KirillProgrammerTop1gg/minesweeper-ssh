@@ -131,6 +131,59 @@ class MinesweeperApp(App):
             is_pvp=False,
         )
         self.timer = None
+        self.current_match_id: Optional[str] = None
+        self.board_widget: Optional[BoardWidget] = None
+        self.stats_bar: Optional[StatsBar] = None
+        self.command_bar: Optional[CommandBar] = None
+        self.board_container: Optional[ScrollableContainer] = None
+
+    def get_board(self) -> Optional[BoardWidget]:
+        if self.board_widget is not None:
+            return self.board_widget
+        try:
+            return self.screen_stack[0].query_one(BoardWidget)
+        except Exception:
+            return None
+
+    def get_stats_bar(self) -> Optional[StatsBar]:
+        if self.stats_bar is not None:
+            return self.stats_bar
+        try:
+            return self.screen_stack[0].query_one(StatsBar)
+        except Exception:
+            return None
+
+    def get_command_bar(self) -> Optional[CommandBar]:
+        if self.command_bar is not None:
+            return self.command_bar
+        try:
+            return self.screen_stack[0].query_one(CommandBar)
+        except Exception:
+            return None
+
+    def get_board_container(self) -> Optional[ScrollableContainer]:
+        if self.board_container is not None:
+            return self.board_container
+        try:
+            return self.screen_stack[0].query_one("#board_container", ScrollableContainer)
+        except Exception:
+            return None
+
+    def focus_board(self) -> None:
+        board = self.get_board()
+        if board:
+            try:
+                board.focus()
+            except Exception:
+                pass
+
+    def show_feedback(self, msg: str, is_error: bool = False) -> None:
+        cmd = self.get_command_bar()
+        if cmd:
+            try:
+                cmd.show_feedback(msg, is_error=is_error)
+            except Exception:
+                pass
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -174,10 +227,18 @@ class MinesweeperApp(App):
             yield Footer()
 
     def on_mount(self) -> None:
+        try:
+            self.board_widget = self.screen_stack[0].query_one(BoardWidget)
+            self.stats_bar = self.screen_stack[0].query_one(StatsBar)
+            self.command_bar = self.screen_stack[0].query_one(CommandBar)
+            self.board_container = self.screen_stack[0].query_one("#board_container", ScrollableContainer)
+        except Exception:
+            pass
+
         self.timer = self.set_interval(1.0, self._on_timer_tick)
-        self.query_one(BoardWidget).focus()
-        self.pvp_client.on_message = self._on_pvp_message
-        self.pvp_client.on_disconnect = self._on_pvp_disconnect
+        self.focus_board()
+        self.pvp_client.add_message_handler(self._on_pvp_message)
+        self.pvp_client.add_disconnect_handler(self._on_pvp_disconnect)
 
     def _on_timer_tick(self) -> None:
         if self.is_networked_pvp and self.game.status in (GameStatus.PLAYING, GameStatus.READY) and not self.match_winner:
@@ -189,8 +250,10 @@ class MinesweeperApp(App):
             self._sync_stats()
 
     def _sync_stats(self) -> None:
-        board = self.query_one(BoardWidget)
-        stats = self.query_one(StatsBar)
+        board = self.get_board()
+        stats = self.get_stats_bar()
+        if not board or not stats:
+            return
         stats.update_stats(
             self.game,
             board.cursor_row,
@@ -217,6 +280,7 @@ class MinesweeperApp(App):
         diff_name: str,
         is_pvp: bool = False,
     ) -> None:
+        self.current_match_id = None
         self.is_networked_pvp = False
         self.opp_score = 0
         self.opp_time = 0
@@ -236,17 +300,19 @@ class MinesweeperApp(App):
         self._score_saved = False
 
         self.game = MinesweeperGame(rows, cols, mines, diff_name, is_pvp=is_pvp)
-        container = self.query_one("#board_container", ScrollableContainer)
-        board = self.query_one(BoardWidget)
-        board.set_game(self.game, local_player_num=1, is_networked_pvp=False)
-        container.scroll_to(0, 0, animate=False)
+        container = self.get_board_container()
+        board = self.get_board()
+        if board:
+            board.set_game(self.game, local_player_num=1, is_networked_pvp=False)
+        if container:
+            container.scroll_to(0, 0, animate=False)
         self._sync_stats()
 
         mode_desc = "PVP Race" if is_pvp else "Singleplayer"
-        self.query_one(CommandBar).show_feedback(
+        self.show_feedback(
             f"Started: {diff_name} ({cols}x{rows}, {mines} mines) - {mode_desc}"
         )
-        board.focus()
+        self.focus_board()
 
     def start_pvp_online_game(self, rows: int, cols: int, mines: int) -> None:
         self.current_rows = rows
@@ -264,30 +330,84 @@ class MinesweeperApp(App):
         self.is_timed_out = False
         self.opp_timed_out = False
         self.last_action_time = time.time()
+        self.pvp_client.add_message_handler(self._on_pvp_message)
+        self.pvp_client.add_disconnect_handler(self._on_pvp_disconnect)
 
         self.game = MinesweeperGame(rows, cols, mines, "PVP Race", is_pvp=True)
-        container = self.query_one("#board_container", ScrollableContainer)
-        board = self.query_one(BoardWidget)
-        board.set_game(self.game, local_player_num=self.local_player_num, is_networked_pvp=True)
-        container.scroll_to(0, 0, animate=False)
+        container = self.get_board_container()
+        board = self.get_board()
+        if board:
+            board.set_game(self.game, local_player_num=self.local_player_num, is_networked_pvp=True)
+        if container:
+            container.scroll_to(0, 0, animate=False)
         self._sync_stats()
 
-        self.query_one(CommandBar).show_feedback(
+        self.show_feedback(
             "PVP Race started! Identical map. Score safe cells & flags. Don't hit mines!"
         )
-        board.focus()
+        self.focus_board()
+
+    def _handle_match_start(self, data: dict) -> None:
+        match_id = data.get("match_id")
+        if self.current_match_id == match_id and self.is_networked_pvp:
+            return
+        self.current_match_id = match_id
+        self.is_networked_pvp = True
+        self.local_player_num = data.get("player_num", 1)
+        self.opp_name = data.get("opponent_nick", "Opponent")
+        if self.local_player_num == 1:
+            self.p1_name = f"{data.get('my_nick', 'Player 1')} ({data.get('my_tag', '')})"
+            self.p2_name = f"{data.get('opponent_nick', 'Player 2')} ({data.get('opponent_tag', '')})"
+        else:
+            self.p1_name = f"{data.get('opponent_nick', 'Player 1')} ({data.get('opponent_tag', '')})"
+            self.p2_name = f"{data.get('my_nick', 'Player 2')} ({data.get('my_tag', '')})"
+
+        rows = data.get("rows", 16)
+        cols = data.get("cols", 16)
+        mines = data.get("mines", 40)
+        self.start_pvp_online_game(rows, cols, mines)
 
     def _on_pvp_message(self, msg: dict) -> None:
         mtype = msg.get("type")
+        if mtype == "match_start":
+            self._handle_match_start(msg)
+            return
+
         if mtype == "state" and self.is_networked_pvp:
+            if not self.game:
+                return
+
+            active_coords = set()
             for cell_tuple in msg.get("cells", []):
-                r, c, is_rev, is_flag, adj, is_det, is_false = cell_tuple
-                cell = self.game.grid[r][c]
-                cell.is_revealed = is_rev
-                cell.is_flagged = is_flag
-                cell.adjacent_mines = adj
-                cell.is_detonated = is_det
-                cell.is_false_flag = is_false
+                r = cell_tuple[0]
+                c = cell_tuple[1]
+                is_rev = cell_tuple[2]
+                is_flag = cell_tuple[3]
+                adj = cell_tuple[4]
+                is_det = cell_tuple[5]
+                is_false = cell_tuple[6]
+                is_mine = cell_tuple[7] if len(cell_tuple) > 7 else False
+
+                if r < self.game.rows and c < self.game.cols:
+                    active_coords.add((r, c))
+                    cell = self.game.grid[r][c]
+                    cell.is_revealed = is_rev
+                    cell.is_flagged = is_flag
+                    cell.adjacent_mines = adj
+                    cell.is_detonated = is_det
+                    cell.is_false_flag = is_false
+                    cell.is_mine = is_mine
+
+            for r in range(self.game.rows):
+                for c in range(self.game.cols):
+                    if (r, c) not in active_coords:
+                        cell = self.game.grid[r][c]
+                        cell.is_revealed = False
+                        cell.is_flagged = False
+                        cell.adjacent_mines = 0
+                        cell.is_detonated = False
+                        cell.is_false_flag = False
+                        cell.is_mine = False
 
             st_val = msg.get("my_status")
             if st_val == "PLAYING":
@@ -317,19 +437,20 @@ class MinesweeperApp(App):
             self.opp_cleared = msg.get("opp_cleared", self.opp_cleared)
             self.opp_status = msg.get("opp_status", self.opp_status)
 
-            board = self.query_one(BoardWidget)
-            board.refresh(layout=False)
+            board = self.get_board()
+            if board:
+                board.refresh(layout=False)
             self._sync_stats()
 
             last_action = msg.get("last_action", "")
             if last_action:
-                self.query_one(CommandBar).show_feedback(last_action)
+                self.show_feedback(last_action)
             elif self.is_timed_out:
-                self.query_one(CommandBar).show_feedback("⏱️ Inactivity timeout (30s)! Game Over.", is_error=True)
+                self.show_feedback("⏱️ Inactivity timeout (30s)! Game Over.", is_error=True)
             elif self.game.status == GameStatus.LOST:
-                self.query_one(CommandBar).show_feedback("💥 You detonated! Waiting for opponent to finish...", is_error=True)
+                self.show_feedback("💥 You detonated! Waiting for opponent to finish...", is_error=True)
             elif self.game.status == GameStatus.WON:
-                self.query_one(CommandBar).show_feedback("🎉 Field cleared! Waiting for match result...")
+                self.show_feedback("🎉 Field cleared! Waiting for match result...")
 
         elif mtype == "game_over" and self.is_networked_pvp:
             self.match_winner = msg.get("winner")
@@ -347,7 +468,9 @@ class MinesweeperApp(App):
                 self.opp_timed_out = msg.get("p1_timed_out", self.opp_timed_out)
 
             self._sync_stats()
-            self.query_one(BoardWidget).refresh(layout=False)
+            board = self.get_board()
+            if board:
+                board.refresh(layout=False)
 
             if self._score_saved:
                 return
@@ -388,23 +511,25 @@ class MinesweeperApp(App):
                     on_pvp_name,
                 )
             else:
-                self.query_one(CommandBar).show_feedback(msg_body, is_error=True)
+                self.show_feedback(msg_body, is_error=True)
                 self.push_screen(LeaderboardModal())
 
         elif mtype == "opponent_cursor" and self.is_networked_pvp:
             r = int(msg.get("r", 0))
             c = int(msg.get("c", 0))
-            self.query_one(BoardWidget).set_opponent_cursor(r, c)
+            board = self.get_board()
+            if board:
+                board.set_opponent_cursor(r, c)
 
         elif mtype == "opponent_disconnected" and self.is_networked_pvp:
-            self.query_one(CommandBar).show_feedback(
+            self.show_feedback(
                 msg.get("message", "Opponent disconnected! Victory by forfeit!"),
                 is_error=False,
             )
 
     def _on_pvp_disconnect(self) -> None:
-        if self.is_networked_pvp and self.game.status == GameStatus.PLAYING:
-            self.query_one(CommandBar).show_feedback("Disconnected from PVP Hub.", is_error=True)
+        if self.is_networked_pvp and self.game and self.game.status == GameStatus.PLAYING:
+            self.show_feedback("Disconnected from PVP Hub.", is_error=True)
 
     def action_set_beginner(self) -> None:
         cfg = DIFFICULTIES["beginner"]
@@ -430,21 +555,8 @@ class MinesweeperApp(App):
         def on_match_ready(result: dict | None) -> None:
             if not result:
                 return
-
-            self.is_networked_pvp = True
-            self.local_player_num = result.get("player_num", 1)
-            self.opp_name = result.get("opponent_nick", "Opponent")
-            if self.local_player_num == 1:
-                self.p1_name = f"{result.get('my_nick', 'Player 1')} ({result.get('my_tag', '')})"
-                self.p2_name = f"{result.get('opponent_nick', 'Player 2')} ({result.get('opponent_tag', '')})"
-            else:
-                self.p1_name = f"{result.get('opponent_nick', 'Player 1')} ({result.get('opponent_tag', '')})"
-                self.p2_name = f"{result.get('my_nick', 'Player 2')} ({result.get('my_tag', '')})"
-
-            rows = result.get("rows", 16)
-            cols = result.get("cols", 16)
-            mines = result.get("mines", 40)
-            self.start_pvp_online_game(rows, cols, mines)
+            self._handle_match_start(result)
+            self.focus_board()
 
         self.push_screen(
             MatchmakingModal(self.pvp_client, self.player_tag, self.player_nick),
@@ -470,10 +582,12 @@ class MinesweeperApp(App):
         self.push_screen(HelpModal())
 
     def action_focus_command(self) -> None:
-        self.query_one(CommandBar).focus_input()
+        cb = self.get_command_bar()
+        if cb:
+            cb.focus_input()
 
     def action_focus_board(self) -> None:
-        self.query_one(BoardWidget).focus()
+        self.focus_board()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         btn_id = event.button.id
@@ -512,16 +626,18 @@ class MinesweeperApp(App):
             )
         else:
             self._sync_stats()
-            self.query_one(CommandBar).show_feedback(event.message)
+            self.show_feedback(event.message)
             self._check_game_over()
 
     def on_command_bar_execute_coordinate(self, event: CommandBar.ExecuteCoordinate) -> None:
-        board = self.query_one(BoardWidget)
+        board = self.get_board()
+        if not board:
+            return
         target_r = event.row if event.row >= 0 else board.cursor_row
         target_c = event.col if event.col >= 0 else board.cursor_col
 
         if not self.game.is_valid_coord(target_r, target_c):
-            self.query_one(CommandBar).show_feedback(
+            self.show_feedback(
                 f"Coordinates out of bounds: {format_coord(target_r, target_c)}", is_error=True
             )
             return
@@ -544,7 +660,7 @@ class MinesweeperApp(App):
             self._sync_stats()
             self._check_game_over()
 
-        board.focus()
+        self.focus_board()
 
     def _check_game_over(self) -> None:
         if self._score_saved:
@@ -610,7 +726,7 @@ class MinesweeperApp(App):
                 self.query_one(f"#{prev_id}", Button).focus()
             elif event.key in ("down", "escape"):
                 event.stop()
-                self.query_one(BoardWidget).focus()
+                self.focus_board()
 
 
 if __name__ == "__main__":

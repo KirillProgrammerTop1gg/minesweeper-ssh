@@ -100,8 +100,12 @@ class BoardWidget(Widget):
     def reveal_current(self) -> None:
         if self.game.status in (GameStatus.WON, GameStatus.LOST):
             return
+        cell = self.game.grid[self.cursor_row][self.cursor_col]
+        if cell.is_flagged:
+            return
         if self.is_networked_pvp:
-            self.post_message(self.ActionTriggered("reveal", self.cursor_row, self.cursor_col, ""))
+            action = "chord" if (cell.is_revealed and cell.adjacent_mines > 0) else "reveal"
+            self.post_message(self.ActionTriggered(action, self.cursor_row, self.cursor_col, ""))
             return
         success, msg = self.game.reveal(self.cursor_row, self.cursor_col)
         self.refresh(layout=False)
@@ -110,6 +114,14 @@ class BoardWidget(Widget):
     def flag_current(self) -> None:
         if self.game.status in (GameStatus.WON, GameStatus.LOST):
             return
+        cell = self.game.grid[self.cursor_row][self.cursor_col]
+        if not cell.is_revealed:
+            cell.is_flagged = not cell.is_flagged
+            if cell.is_flagged:
+                self.game.flags_count += 1
+            else:
+                self.game.flags_count = max(0, self.game.flags_count - 1)
+            self.refresh(layout=False)
         if self.is_networked_pvp:
             self.post_message(self.ActionTriggered("flag", self.cursor_row, self.cursor_col, ""))
             return
@@ -230,12 +242,12 @@ class BoardWidget(Widget):
                     elif cell.is_false_flag:
                         cell_str = "[X]"
                         style = "bold white on #b91c1c"
+                    elif cell.is_mine and (cell.is_revealed or self.game.status in (GameStatus.WON, GameStatus.LOST)):
+                        cell_str = "[*]"
+                        style = "bold #fef08a on #991b1b"
                     elif not cell.is_revealed:
                         cell_str = "[·]"
                         style = f"bold white on {cursor_bg}"
-                    elif cell.is_mine:
-                        cell_str = "[*]"
-                        style = "bold #fef08a on #991b1b"
                     elif cell.adjacent_mines > 0:
                         cell_str = f"[{cell.adjacent_mines}]"
                         style = f"bold white on {cursor_bg}"
@@ -246,6 +258,12 @@ class BoardWidget(Widget):
                     opp_color = "#dc2626" if self.local_player_num == 1 else "#2563eb"
                     if cell.is_flagged:
                         cell_str = "(⚑)"
+                        style = f"bold white on {opp_color}"
+                    elif cell.is_false_flag:
+                        cell_str = "(X)"
+                        style = "bold white on #b91c1c"
+                    elif cell.is_mine and (cell.is_revealed or self.game.status in (GameStatus.WON, GameStatus.LOST)):
+                        cell_str = "(*)"
                         style = f"bold white on {opp_color}"
                     elif not cell.is_revealed:
                         cell_str = "(·)"
@@ -266,12 +284,12 @@ class BoardWidget(Widget):
                     elif cell.is_false_flag:
                         cell_str = " X "
                         style = "bold #f43f5e"
+                    elif cell.is_mine and (cell.is_revealed or self.game.status in (GameStatus.WON, GameStatus.LOST)):
+                        cell_str = " * "
+                        style = "bold #fbbf24"
                     elif not cell.is_revealed:
                         cell_str = " · "
                         style = "#64748b"
-                    elif cell.is_mine:
-                        cell_str = " * "
-                        style = "bold #fbbf24"
                     elif cell.adjacent_mines > 0:
                         cell_str = f" {cell.adjacent_mines} "
                         style = NUMBER_STYLES.get(cell.adjacent_mines, "bold white")

@@ -103,6 +103,7 @@ class MinesweeperGame:
         mines: int = 10,
         difficulty_name: str = "Beginner",
         is_pvp: bool = False,
+        preset_mines: Optional[Set[Tuple[int, int]]] = None,
     ):
         self.rows = max(4, rows)
         self.cols = max(4, cols)
@@ -110,6 +111,7 @@ class MinesweeperGame:
         self.total_mines = max(1, min(mines, max_mines))
         self.difficulty_name = difficulty_name
         self.is_pvp = is_pvp
+        self.preset_mines = set(preset_mines) if preset_mines is not None else None
 
         self.grid: List[List[Cell]] = []
         self.status = GameStatus.READY
@@ -135,11 +137,39 @@ class MinesweeperGame:
         self.moves_count = 0
         self.flags_count = 0
         self.revealed_count = 0
-        self.safe_cells_total = self.rows * self.cols - self.total_mines
         self.score = 0
         self.current_player = 1
         self.player_scores = {1: 0, 2: 0}
         self.pvp_winner = None
+
+        if self.preset_mines is not None:
+            for r, c in self.preset_mines:
+                if self.is_valid_coord(r, c):
+                    self.grid[r][c].is_mine = True
+            self.total_mines = len(self.preset_mines)
+            self.safe_cells_total = self.rows * self.cols - self.total_mines
+            self._recalc_adjacent()
+        else:
+            self.safe_cells_total = self.rows * self.cols - self.total_mines
+
+    def _recalc_adjacent(self) -> None:
+        for r in range(self.rows):
+            for c in range(self.cols):
+                if not self.grid[r][c].is_mine:
+                    self.grid[r][c].adjacent_mines = sum(
+                        1 for nr, nc in self.get_neighbors(r, c) if self.grid[nr][nc].is_mine
+                    )
+                else:
+                    self.grid[r][c].adjacent_mines = 0
+
+    def _relocate_mine(self, old_r: int, old_c: int) -> None:
+        for r in range(self.rows):
+            for c in range(self.cols):
+                if (r, c) != (old_r, old_c) and not self.grid[r][c].is_mine:
+                    self.grid[old_r][old_c].is_mine = False
+                    self.grid[r][c].is_mine = True
+                    self._recalc_adjacent()
+                    return
 
     def is_valid_coord(self, r: int, c: int) -> bool:
         return 0 <= r < self.rows and 0 <= c < self.cols
@@ -179,7 +209,11 @@ class MinesweeperGame:
 
     def start_if_needed(self, r: int, c: int) -> None:
         if self.status == GameStatus.READY:
-            self._generate_mines(r, c)
+            if self.preset_mines is not None:
+                if self.grid[r][c].is_mine:
+                    self._relocate_mine(r, c)
+            else:
+                self._generate_mines(r, c)
             self.status = GameStatus.PLAYING
             self.start_time = time.time()
 
@@ -213,9 +247,6 @@ class MinesweeperGame:
         self.start_if_needed(r, c)
         self.moves_count += 1
 
-        if self.is_pvp:
-            return self._reveal_pvp(r, c)
-
         if cell.is_mine:
             cell.is_detonated = True
             self.status = GameStatus.LOST
@@ -235,60 +266,6 @@ class MinesweeperGame:
 
         return True, f"Opened {format_coord(r, c)}"
 
-    def _reveal_pvp(self, r: int, c: int) -> Tuple[bool, str]:
-        cell = self.grid[r][c]
-        p = self.current_player
-
-        if cell.is_mine:
-            cell.is_revealed = True
-            cell.found_by_player = p
-            self.player_scores[p] += 1
-            mines_found = self.player_scores[1] + self.player_scores[2]
-
-            half = self.total_mines / 2
-            if self.player_scores[1] > half:
-                self.status = GameStatus.WON
-                self.end_time = time.time()
-                self.pvp_winner = "Player 1"
-                return True, f"Player 1 found mine #{mines_found} and WINS the match!"
-
-            if self.player_scores[2] > half:
-                self.status = GameStatus.WON
-                self.end_time = time.time()
-                self.pvp_winner = "Player 2"
-                return True, f"Player 2 found mine #{mines_found} and WINS the match!"
-
-            if mines_found >= self.total_mines:
-                self.status = GameStatus.WON
-                self.end_time = time.time()
-                if self.player_scores[1] > self.player_scores[2]:
-                    self.pvp_winner = "Player 1"
-                elif self.player_scores[2] > self.player_scores[1]:
-                    self.pvp_winner = "Player 2"
-                else:
-                    self.pvp_winner = "Draw"
-                return True, f"All mines cleared! Result: {self.pvp_winner}!"
-
-            return True, f"Player {p} found a MINE (+1 pt)! Extra turn granted!"
-
-        newly_revealed = self._flood_fill_reveal(r, c)
-        self.revealed_count += newly_revealed
-
-        next_player = 2 if p == 1 else 1
-        self.current_player = next_player
-
-        if self.revealed_count >= self.safe_cells_total:
-            self.status = GameStatus.WON
-            self.end_time = time.time()
-            if self.player_scores[1] > self.player_scores[2]:
-                self.pvp_winner = "Player 1"
-            elif self.player_scores[2] > self.player_scores[1]:
-                self.pvp_winner = "Player 2"
-            else:
-                self.pvp_winner = "Draw"
-            return True, f"Board cleared! Winner: {self.pvp_winner}!"
-
-        return True, f"Safe! Turn passed to Player {next_player}."
 
     def _flood_fill_reveal(self, start_r: int, start_c: int) -> int:
         queue = [(start_r, start_c)]
@@ -336,11 +313,15 @@ class MinesweeperGame:
             self.flags_count += 1
             if cell.is_mine:
                 self.score += 25
+            else:
+                self.score = max(0, self.score - 10)
             msg = f"Flag placed on {format_coord(r, c)}"
         else:
             self.flags_count -= 1
             if cell.is_mine:
                 self.score = max(0, self.score - 25)
+            else:
+                self.score += 10
             msg = f"Flag removed from {format_coord(r, c)}"
 
         self.moves_count += 1
@@ -416,6 +397,12 @@ class MinesweeperGame:
         self.flags_count = self.total_mines
 
         elapsed = self.get_elapsed_time()
-        base_bonuses = {"Beginner": 1000, "Intermediate": 2500, "Expert": 5000}
+        base_bonuses = {
+            "Beginner": 1000,
+            "Intermediate": 2500,
+            "Expert": 5000,
+            "PVP Race": 3000,
+            "PVP 1v1": 3000,
+        }
         base_bonus = base_bonuses.get(self.difficulty_name, self.rows * self.cols * 10)
-        self.score += max(100, base_bonus - (elapsed * 2))
+        self.score += max(200, base_bonus - (elapsed * 3))

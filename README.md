@@ -16,11 +16,13 @@ A clean, modern terminal Minesweeper built with Python and [Textual](https://git
 
 ## Features
 
-- **Real-time Ranked PVP Duel**:
-  - **Online Matchmaking**: Queue up by pressing `5` — players connecting over SSH are instantly paired on the same authoritative board in real time.
-  - **Minesweeper Flags Rules**: Turn-based duel. Revealing a mine grants +1 point and keeps your turn. Opening a safe cell reveals clues and passes the turn to your opponent. First to clear more than half the mines wins.
-  - **AI Practice Bot**: If queuing late at night, press `B` to instantly duel an intelligent AI bot.
-  - **Client Fingerprint & Ranked Leaderboard**: Wins, losses, win rates, and mines found are permanently tied to your unique machine tag (e.g. `#A4E2`). Enter your nickname after victory to claim your spot in the Hall of Fame.
+- **Real-time Ranked PVP Race**:
+  - **Identical Seeded Map**: Both players are spawned onto the exact same minefield layout with identical mine placements.
+  - **Classic Elimination**: Hitting a mine causes instant detonation and run loss (`[DETONATED]`). First-click mine relocation guarantees a safe opening move.
+  - **Asynchronous Parallel Racing**: No turn waiting. Both players play independently in real time with live opponent telemetry: score, elapsed time, cells cleared, and current status (`[RACING]`, `[BOOM]`, `[CLEARED]`).
+  - **Score & Speed Based Ranking**: Safe cells award combo points, accurate flags award +25 pts (-10 penalty for false flags), and full clear awards speed bonus points. Highest score wins (tiebroken by time).
+  - **AI Practice Bot**: Press `B` in queue to race against an intelligent AI bot in real time.
+  - **Client Fingerprint & Ranked Leaderboard**: Permanent win/loss statistics tied to your SSH machine tag (e.g. `#A4E2`). Winners enter their nickname into the Hall of Fame.
 - **Singleplayer Classic**:
   - Classic rules with first-click safety, flood fills, chording (`C`), and high score tracking.
 - **Board Difficulties**:

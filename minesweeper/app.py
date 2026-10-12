@@ -111,6 +111,12 @@ class MinesweeperApp(App):
         self.local_player_num = 1
         self.p1_name = "Player 1"
         self.p2_name = "Player 2"
+        self.opp_score = 0
+        self.opp_time = 0
+        self.opp_cleared = 0
+        self.opp_status = "READY"
+        self.opp_name = "Opponent"
+        self.match_winner: Optional[str] = None
 
         self.game = MinesweeperGame(
             self.current_rows,
@@ -139,6 +145,12 @@ class MinesweeperApp(App):
             local_player_num=self.local_player_num,
             p1_name=self.p1_name,
             p2_name=self.p2_name,
+            opp_score=self.opp_score,
+            opp_time=self.opp_time,
+            opp_cleared=self.opp_cleared,
+            opp_status=self.opp_status,
+            opp_name=self.opp_name,
+            match_winner=self.match_winner,
             id="stats_bar",
         )
 
@@ -160,7 +172,7 @@ class MinesweeperApp(App):
         self.pvp_client.on_disconnect = self._on_pvp_disconnect
 
     def _on_timer_tick(self) -> None:
-        if self.game.status == GameStatus.PLAYING and not self.is_networked_pvp:
+        if self.game.status == GameStatus.PLAYING:
             self._sync_stats()
 
     def _sync_stats(self) -> None:
@@ -173,6 +185,12 @@ class MinesweeperApp(App):
             local_player_num=self.local_player_num,
             p1_name=self.p1_name,
             p2_name=self.p2_name,
+            opp_score=self.opp_score,
+            opp_time=self.opp_time,
+            opp_cleared=self.opp_cleared,
+            opp_status=self.opp_status,
+            opp_name=self.opp_name,
+            match_winner=self.match_winner,
         )
 
     def start_new_game(
@@ -184,6 +202,12 @@ class MinesweeperApp(App):
         is_pvp: bool = False,
     ) -> None:
         self.is_networked_pvp = False
+        self.opp_score = 0
+        self.opp_time = 0
+        self.opp_cleared = 0
+        self.opp_status = "READY"
+        self.opp_name = "Opponent"
+        self.match_winner = None
         self.current_rows = rows
         self.current_cols = cols
         self.current_mines = mines
@@ -194,11 +218,11 @@ class MinesweeperApp(App):
         self.game = MinesweeperGame(rows, cols, mines, diff_name, is_pvp=is_pvp)
         container = self.query_one("#board_container", ScrollableContainer)
         board = self.query_one(BoardWidget)
-        board.set_game(self.game, local_player_num=1)
+        board.set_game(self.game, local_player_num=1, is_networked_pvp=False)
         container.scroll_to(0, 0, animate=False)
         self._sync_stats()
 
-        mode_desc = "PVP Local Hotseat" if is_pvp else "Singleplayer"
+        mode_desc = "PVP Race" if is_pvp else "Singleplayer"
         self.query_one(CommandBar).show_feedback(
             f"Started: {diff_name} ({cols}x{rows}, {mines} mines) - {mode_desc}"
         )
@@ -208,20 +232,24 @@ class MinesweeperApp(App):
         self.current_rows = rows
         self.current_cols = cols
         self.current_mines = mines
-        self.current_diff_name = "PVP 1v1"
+        self.current_diff_name = "PVP Race"
         self.current_is_pvp = True
         self._score_saved = False
+        self.opp_score = 0
+        self.opp_time = 0
+        self.opp_cleared = 0
+        self.opp_status = "READY"
+        self.match_winner = None
 
-        self.game = MinesweeperGame(rows, cols, mines, "PVP 1v1", is_pvp=True)
+        self.game = MinesweeperGame(rows, cols, mines, "PVP Race", is_pvp=True)
         container = self.query_one("#board_container", ScrollableContainer)
         board = self.query_one(BoardWidget)
-        board.set_game(self.game, local_player_num=self.local_player_num)
+        board.set_game(self.game, local_player_num=self.local_player_num, is_networked_pvp=True)
         container.scroll_to(0, 0, animate=False)
         self._sync_stats()
 
-        turn_msg = "You go first (Blue)!" if self.local_player_num == 1 else "Opponent goes first (Blue)!"
         self.query_one(CommandBar).show_feedback(
-            f"PVP Duel started! Playing as Player {self.local_player_num}. {turn_msg}"
+            "PVP Race started! Identical map. Score safe cells & flags. Don't hit mines!"
         )
         board.focus()
 
@@ -229,24 +257,37 @@ class MinesweeperApp(App):
         mtype = msg.get("type")
         if mtype == "state" and self.is_networked_pvp:
             for cell_tuple in msg.get("cells", []):
-                r, c, is_rev, is_flag, adj, found_by, is_det = cell_tuple
+                r, c, is_rev, is_flag, adj, is_det, is_false = cell_tuple
                 cell = self.game.grid[r][c]
                 cell.is_revealed = is_rev
                 cell.is_flagged = is_flag
                 cell.adjacent_mines = adj
-                cell.found_by_player = found_by
                 cell.is_detonated = is_det
+                cell.is_false_flag = is_false
 
-            st_val = msg.get("status")
+            st_val = msg.get("my_status")
             if st_val == "PLAYING":
                 self.game.status = GameStatus.PLAYING
             elif st_val == "WON":
                 self.game.status = GameStatus.WON
+            elif st_val == "LOST":
+                self.game.status = GameStatus.LOST
 
-            self.game.current_player = msg.get("current_player", 1)
-            self.game.player_scores[1] = msg.get("p1_score", 0)
-            self.game.player_scores[2] = msg.get("p2_score", 0)
-            self.game.pvp_winner = msg.get("winner")
+            self.game.score = msg.get("my_score", self.game.score)
+            self.game.revealed_count = msg.get("my_cleared", self.game.revealed_count)
+            self.game.flags_count = msg.get("my_flags", self.game.flags_count)
+
+            my_time = msg.get("my_time", 0)
+            if self.game.start_time is None and my_time > 0:
+                self.game.start_time = time.time() - my_time
+            if self.game.status in (GameStatus.WON, GameStatus.LOST) and self.game.start_time is not None and self.game.end_time is None:
+                self.game.end_time = self.game.start_time + my_time
+
+            self.opp_name = msg.get("opp_nick") or self.opp_name
+            self.opp_score = msg.get("opp_score", self.opp_score)
+            self.opp_time = msg.get("opp_time", self.opp_time)
+            self.opp_cleared = msg.get("opp_cleared", self.opp_cleared)
+            self.opp_status = msg.get("opp_status", self.opp_status)
 
             board = self.query_one(BoardWidget)
             board.refresh(layout=False)
@@ -255,9 +296,57 @@ class MinesweeperApp(App):
             last_action = msg.get("last_action", "")
             if last_action:
                 self.query_one(CommandBar).show_feedback(last_action)
+            elif self.game.status == GameStatus.LOST:
+                self.query_one(CommandBar).show_feedback("💥 You detonated! Waiting for opponent to finish...", is_error=True)
+            elif self.game.status == GameStatus.WON:
+                self.query_one(CommandBar).show_feedback("🎉 Field cleared! Waiting for match result...")
 
-            if self.game.status == GameStatus.WON:
-                self._check_game_over()
+        elif mtype == "game_over" and self.is_networked_pvp:
+            self.match_winner = msg.get("winner")
+            p1_score = msg.get("p1_score", 0)
+            p2_score = msg.get("p2_score", 0)
+            my_score = p1_score if self.local_player_num == 1 else p2_score
+            opp_score = p2_score if self.local_player_num == 1 else p1_score
+            winner_nick = msg.get("winner_nick", "")
+
+            self._sync_stats()
+            self.query_one(BoardWidget).refresh(layout=False)
+
+            if self._score_saved:
+                return
+            self._score_saved = True
+
+            i_won = (self.match_winner == f"Player {self.local_player_num}")
+            if self.match_winner == "Draw":
+                title = "🤝 MATCH DRAW! 🤝"
+                msg_body = f"Final Score: You {my_score} pts vs Opponent {opp_score} pts"
+            elif i_won:
+                title = "🏆 VICTORY IN PVP RACE! 🏆"
+                msg_body = f"Final Score: You {my_score} pts vs Opponent {opp_score} pts\nEnter your nickname for the global leaderboard:"
+            else:
+                title = "💥 DEFEAT IN PVP RACE 💥"
+                msg_body = f"Winner: {winner_nick} ({opp_score} pts vs {my_score} pts)"
+
+            def on_pvp_name(name: str | None) -> None:
+                if name:
+                    self.player_nick = name.strip()
+                    update_pvp_nick(self.player_tag, self.player_nick)
+                    if self.is_networked_pvp:
+                        asyncio.create_task(self.pvp_client.submit_nick(self.player_nick))
+                self.push_screen(LeaderboardModal())
+
+            if i_won:
+                self.push_screen(
+                    NamePromptModal(
+                        title,
+                        msg_body,
+                        default_name=self.player_nick,
+                    ),
+                    on_pvp_name,
+                )
+            else:
+                self.query_one(CommandBar).show_feedback(msg_body, is_error=True)
+                self.push_screen(LeaderboardModal())
 
         elif mtype == "opponent_cursor" and self.is_networked_pvp:
             r = int(msg.get("r", 0))
@@ -265,15 +354,10 @@ class MinesweeperApp(App):
             self.query_one(BoardWidget).set_opponent_cursor(r, c)
 
         elif mtype == "opponent_disconnected" and self.is_networked_pvp:
-            if self.game.status != GameStatus.WON:
-                self.game.status = GameStatus.WON
-                self.game.pvp_winner = msg.get("winner", f"Player {self.local_player_num}")
-                self.query_one(CommandBar).show_feedback(
-                    msg.get("message", "Opponent disconnected! Victory by forfeit!"),
-                    is_error=False,
-                )
-                self._sync_stats()
-                self._check_game_over()
+            self.query_one(CommandBar).show_feedback(
+                msg.get("message", "Opponent disconnected! Victory by forfeit!"),
+                is_error=False,
+            )
 
     def _on_pvp_disconnect(self) -> None:
         if self.is_networked_pvp and self.game.status == GameStatus.PLAYING:
@@ -305,11 +389,13 @@ class MinesweeperApp(App):
                 return
             if result.get("offline_bot"):
                 self.is_networked_pvp = False
-                self.start_new_game(16, 16, 40, "PVP vs Bot", is_pvp=True)
+                self.start_new_game(16, 16, 40, "Intermediate", is_pvp=False)
+                self.query_one(CommandBar).show_feedback("Hub offline. Playing solo mode.", is_error=True)
                 return
 
             self.is_networked_pvp = True
             self.local_player_num = result.get("player_num", 1)
+            self.opp_name = result.get("opponent_nick", "Opponent")
             if self.local_player_num == 1:
                 self.p1_name = f"{result.get('my_nick', 'Player 1')} ({result.get('my_tag', '')})"
                 self.p2_name = f"{result.get('opponent_nick', 'Player 2')} ({result.get('opponent_tag', '')})"
@@ -377,10 +463,7 @@ class MinesweeperApp(App):
 
     def on_board_widget_action_triggered(self, event: BoardWidget.ActionTriggered) -> None:
         if self.is_networked_pvp:
-            if self.game.current_player != self.local_player_num:
-                self.query_one(CommandBar).show_feedback(
-                    "Wait for opponent's turn!", is_error=True
-                )
+            if self.game.status in (GameStatus.WON, GameStatus.LOST):
                 return
             asyncio.create_task(
                 self.pvp_client.send_move(event.action, event.row, event.col)
@@ -404,10 +487,7 @@ class MinesweeperApp(App):
         board.set_cursor(target_r, target_c)
 
         if self.is_networked_pvp:
-            if self.game.current_player != self.local_player_num:
-                self.query_one(CommandBar).show_feedback(
-                    "Wait for opponent's turn!", is_error=True
-                )
+            if self.game.status in (GameStatus.WON, GameStatus.LOST):
                 return
             asyncio.create_task(
                 self.pvp_client.send_move(event.action, target_r, target_c)
@@ -426,59 +506,32 @@ class MinesweeperApp(App):
         if self._score_saved:
             return
 
+        if self.is_networked_pvp:
+            return
+
         if self.game.status == GameStatus.WON:
             self._score_saved = True
-            if self.is_networked_pvp or self.game.is_pvp:
-                winner_str = self.game.pvp_winner or "Player 1"
-                p1 = self.game.player_scores.get(1, 0)
-                p2 = self.game.player_scores.get(2, 0)
+            elapsed = int(self.game.elapsed_time)
+            score = self.game.score
 
-                i_won = (winner_str == f"Player {self.local_player_num}")
-
-                def on_pvp_name(name: str | None) -> None:
-                    if name:
-                        self.player_nick = name.strip()
-                        update_pvp_nick(self.player_tag, self.player_nick)
-                        if self.is_networked_pvp:
-                            asyncio.create_task(self.pvp_client.submit_nick(self.player_nick))
-                    self.push_screen(LeaderboardModal())
-
-                if i_won:
-                    self.push_screen(
-                        NamePromptModal(
-                            "🏆 VICTORY IN PVP DUEL! 🏆",
-                            f"Score: {p1} - {p2} • Tag: {self.player_tag}\nEnter your nickname for the global leaderboard:",
-                            default_name=self.player_nick,
-                        ),
-                        on_pvp_name,
-                    )
-                else:
-                    self.query_one(CommandBar).show_feedback(
-                        f"Match ended! Winner: {winner_str} ({p1} - {p2})"
-                    )
-                    self.push_screen(LeaderboardModal())
-            else:
-                elapsed = int(self.game.elapsed_time)
-                score = self.game.score
-
-                def on_name_entered(name: str | None) -> None:
-                    player_name = name or self.player_nick
-                    add_singleplayer_score(
-                        player_name,
-                        self.current_diff_name,
-                        score,
-                        elapsed,
-                    )
-                    self.push_screen(LeaderboardModal())
-
-                self.push_screen(
-                    NamePromptModal(
-                        "Field Cleared!",
-                        f"Finished in {elapsed}s with score {score}!",
-                        default_name=self.player_nick,
-                    ),
-                    on_name_entered,
+            def on_name_entered(name: str | None) -> None:
+                player_name = name or self.player_nick
+                add_singleplayer_score(
+                    player_name,
+                    self.current_diff_name,
+                    score,
+                    elapsed,
                 )
+                self.push_screen(LeaderboardModal())
+
+            self.push_screen(
+                NamePromptModal(
+                    "Field Cleared!",
+                    f"Finished in {elapsed}s with score {score}!",
+                    default_name=self.player_nick,
+                ),
+                on_name_entered,
+            )
 
     def on_key(self, event: events.Key) -> None:
         if event.key == "ctrl+q":

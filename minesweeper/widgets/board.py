@@ -55,6 +55,7 @@ class BoardWidget(Widget):
         self.cursor_col = 0
         self.opponent_cursor: tuple[int, int] | None = None
         self.local_player_num: int = 1
+        self.is_networked_pvp: bool = False
 
     def get_content_width(self, container: Size, viewport: Size) -> int:
         num_w = max(2, len(str(self.game.rows)))
@@ -64,12 +65,13 @@ class BoardWidget(Widget):
     def get_content_height(self, container: Size, viewport: Size, width: int) -> int:
         return self.game.rows + 4
 
-    def set_game(self, game: MinesweeperGame, local_player_num: int = 1) -> None:
+    def set_game(self, game: MinesweeperGame, local_player_num: int = 1, is_networked_pvp: bool = False) -> None:
         self.game = game
         self.cursor_row = 0
         self.cursor_col = 0
         self.opponent_cursor = None
         self.local_player_num = local_player_num
+        self.is_networked_pvp = is_networked_pvp
         self.refresh(layout=True)
         self._notify_cursor()
 
@@ -96,16 +98,31 @@ class BoardWidget(Widget):
         self.set_cursor(new_r, new_c)
 
     def reveal_current(self) -> None:
+        if self.game.status in (GameStatus.WON, GameStatus.LOST):
+            return
+        if self.is_networked_pvp:
+            self.post_message(self.ActionTriggered("reveal", self.cursor_row, self.cursor_col, ""))
+            return
         success, msg = self.game.reveal(self.cursor_row, self.cursor_col)
         self.refresh(layout=False)
         self.post_message(self.ActionTriggered("reveal", self.cursor_row, self.cursor_col, msg))
 
     def flag_current(self) -> None:
+        if self.game.status in (GameStatus.WON, GameStatus.LOST):
+            return
+        if self.is_networked_pvp:
+            self.post_message(self.ActionTriggered("flag", self.cursor_row, self.cursor_col, ""))
+            return
         success, msg = self.game.toggle_flag(self.cursor_row, self.cursor_col)
         self.refresh(layout=False)
         self.post_message(self.ActionTriggered("flag", self.cursor_row, self.cursor_col, msg))
 
     def chord_current(self) -> None:
+        if self.game.status in (GameStatus.WON, GameStatus.LOST):
+            return
+        if self.is_networked_pvp:
+            self.post_message(self.ActionTriggered("chord", self.cursor_row, self.cursor_col, ""))
+            return
         success, msg = self.game.chord(self.cursor_row, self.cursor_col)
         self.refresh(layout=False)
         self.post_message(self.ActionTriggered("chord", self.cursor_row, self.cursor_col, msg))

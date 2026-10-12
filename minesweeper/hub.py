@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 import random
-import sys
+import time
 import uuid
 from typing import Dict, List, Optional, Tuple
 
@@ -40,7 +40,7 @@ class HubClient:
 
 
 class BotClient(HubClient):
-    def __init__(self, match: Match, player_num: int):
+    def __init__(self, match: Optional[Match], player_num: int):
         self.tag = "#BOT0"
         self.nick = "MinesweeperAI"
         self.player_num = player_num
@@ -52,7 +52,15 @@ class BotClient(HubClient):
 
 
 class Match:
-    def __init__(self, match_id: str, p1: HubClient, p2: HubClient, rows: int = 16, cols: int = 16, mines: int = 40):
+    def __init__(
+        self,
+        match_id: str,
+        p1: HubClient,
+        p2: HubClient,
+        rows: int = 16,
+        cols: int = 16,
+        mines: int = 40,
+    ):
         self.match_id = match_id
         self.p1 = p1
         self.p2 = p2
@@ -60,117 +68,223 @@ class Match:
         self.p1.player_num = 1
         self.p2.match = self
         self.p2.player_num = 2
-        self.game = MinesweeperGame(rows, cols, mines, difficulty_name="PVP 1v1", is_pvp=True)
+        self.rows = rows
+        self.cols = cols
+        self.mines = mines
+
+        all_cells = [(r, c) for r in range(rows) for c in range(cols)]
+        self.preset_mines = set(random.sample(all_cells, mines))
+
+        self.p1_game = MinesweeperGame(
+            rows, cols, mines, difficulty_name="PVP Race", is_pvp=False, preset_mines=set(self.preset_mines)
+        )
+        self.p2_game = MinesweeperGame(
+            rows, cols, mines, difficulty_name="PVP Race", is_pvp=False, preset_mines=set(self.preset_mines)
+        )
+
+        self.p1_cursor = (0, 0)
+        self.p2_cursor = (0, 0)
         self.is_finished = False
+        self.last_move_time = time.time()
+        self.telemetry_task: Optional[asyncio.Task] = None
+
+    def get_game(self, client: HubClient) -> MinesweeperGame:
+        return self.p1_game if client == self.p1 else self.p2_game
+
+    def get_opponent_game(self, client: HubClient) -> MinesweeperGame:
+        return self.p2_game if client == self.p1 else self.p1_game
 
     def get_opponent(self, client: HubClient) -> HubClient:
         return self.p2 if client == self.p1 else self.p1
 
-    def serialize_grid(self) -> list[list[dict]]:
-        grid_data = []
-        for r in range(self.game.rows):
-            row_data = []
-            for c in range(self.game.cols):
-                cell = self.game.grid[r][c]
-                row_data.append({
-                    "r": cell.is_revealed,
-                    "f": cell.is_flagged,
-                    "m": cell.adjacent_mines if cell.is_revealed else 0,
-                    "mine": cell.is_mine if cell.is_revealed else False,
-                    "det": cell.is_detonated,
-                    "p": cell.found_by_player,
-                })
-            row_data.append(row_data)
-        return grid_data
-
-    async def broadcast_state(self, last_action: str = "") -> None:
+    def _extract_cells(self, game: MinesweeperGame) -> list:
         cells_state = []
-        for r in range(self.game.rows):
-            for c in range(self.game.cols):
-                cell = self.game.grid[r][c]
-                if cell.is_revealed or cell.is_flagged or cell.is_detonated or cell.found_by_player:
+        for r in range(game.rows):
+            for c in range(game.cols):
+                cell = game.grid[r][c]
+                if cell.is_revealed or cell.is_flagged or cell.is_detonated or cell.is_false_flag:
                     cells_state.append((
                         r,
                         c,
                         cell.is_revealed,
                         cell.is_flagged,
                         cell.adjacent_mines,
-                        cell.found_by_player,
                         cell.is_detonated,
+                        cell.is_false_flag,
                     ))
+        return cells_state
+
+    async def send_player_state(self, client: HubClient, last_action: str = "") -> None:
+        if client.is_bot:
+            return
+        my_game = self.get_game(client)
+        opp_game = self.get_opponent_game(client)
+        opp_client = self.get_opponent(client)
 
         state_msg = {
             "type": "state",
-            "status": self.game.status.value,
-            "current_player": self.game.current_player,
-            "p1_score": self.game.player_scores[1],
-            "p2_score": self.game.player_scores[2],
-            "cells": cells_state,
+            "cells": self._extract_cells(my_game),
+            "my_score": my_game.score,
+            "my_time": my_game.get_elapsed_time(),
+            "my_cleared": my_game.revealed_count,
+            "my_total_safe": my_game.safe_cells_total,
+            "my_flags": my_game.flags_count,
+            "my_status": my_game.status.value,
+            "opp_nick": opp_client.nick,
+            "opp_tag": opp_client.tag,
+            "opp_score": opp_game.score,
+            "opp_time": opp_game.get_elapsed_time(),
+            "opp_cleared": opp_game.revealed_count,
+            "opp_total_safe": opp_game.safe_cells_total,
+            "opp_status": opp_game.status.value,
             "last_action": last_action,
-            "winner": self.game.pvp_winner,
         }
-        await self.p1.send_json(state_msg)
-        await self.p2.send_json(state_msg)
+        await client.send_json(state_msg)
 
-    async def end_match(self, winner_str: str) -> None:
+    async def broadcast_state(self, p1_action: str = "", p2_action: str = "") -> None:
+        await self.send_player_state(self.p1, p1_action)
+        await self.send_player_state(self.p2, p2_action)
+
+    async def check_match_completion(self) -> None:
+        if self.is_finished:
+            return
+
+        p1_done = self.p1_game.status in (GameStatus.WON, GameStatus.LOST)
+        p2_done = self.p2_game.status in (GameStatus.WON, GameStatus.LOST)
+
+        if p1_done and p2_done:
+            await self._finalize_match()
+        elif p1_done or p2_done:
+            if time.time() - self.last_move_time > 45.0:
+                await self._finalize_match()
+
+    async def _finalize_match(self) -> None:
+        if self.is_finished:
+            return
+
+        p1_score = self.p1_game.score
+        p2_score = self.p2_game.score
+        p1_time = self.p1_game.get_elapsed_time()
+        p2_time = self.p2_game.get_elapsed_time()
+
+        if p1_score > p2_score:
+            winner = "Player 1"
+            winner_nick = self.p1.nick
+        elif p2_score > p1_score:
+            winner = "Player 2"
+            winner_nick = self.p2.nick
+        else:
+            if p1_time < p2_time:
+                winner = "Player 1"
+                winner_nick = self.p1.nick
+            elif p2_time < p1_time:
+                winner = "Player 2"
+                winner_nick = self.p2.nick
+            else:
+                winner = "Draw"
+                winner_nick = "Draw"
+
+        await self.end_match(winner, winner_nick)
+
+    async def end_match(self, winner: str, winner_nick: str) -> None:
         if self.is_finished:
             return
         self.is_finished = True
-        self.game.status = GameStatus.WON
-        self.game.pvp_winner = winner_str
 
-        p1_score = self.game.player_scores[1]
-        p2_score = self.game.player_scores[2]
+        if self.telemetry_task and not self.telemetry_task.done():
+            self.telemetry_task.cancel()
+
+        p1_score = self.p1_game.score
+        p2_score = self.p2_game.score
 
         record_pvp_match(
             p1_tag=self.p1.tag,
             p1_nick=self.p1.nick,
             p2_tag=self.p2.tag,
             p2_nick=self.p2.nick,
-            winner=winner_str,
+            winner=winner,
             p1_score=p1_score,
             p2_score=p2_score,
         )
 
         over_msg = {
             "type": "game_over",
-            "winner": winner_str,
+            "winner": winner,
+            "winner_nick": winner_nick,
+            "p1_nick": self.p1.nick,
+            "p1_tag": self.p1.tag,
             "p1_score": p1_score,
+            "p1_time": self.p1_game.get_elapsed_time(),
+            "p1_status": self.p1_game.status.value,
+            "p2_nick": self.p2.nick,
+            "p2_tag": self.p2.tag,
             "p2_score": p2_score,
+            "p2_time": self.p2_game.get_elapsed_time(),
+            "p2_status": self.p2_game.status.value,
         }
-        logger.info(f"Match ended [{self.match_id}]: Winner {winner_str} ({p1_score} - {p2_score})")
+        logger.info(
+            f"Match ended [{self.match_id}]: Winner {winner_nick} ({p1_score} - {p2_score})"
+        )
         await self.p1.send_json(over_msg)
         await self.p2.send_json(over_msg)
 
-    def bot_think_and_move(self) -> Tuple[int, int]:
-        unrevealed = []
-        for r in range(self.game.rows):
-            for c in range(self.game.cols):
-                cell = self.game.grid[r][c]
-                if not cell.is_revealed and not cell.is_flagged:
-                    unrevealed.append((r, c))
+    async def start_telemetry_loop(self) -> None:
+        try:
+            while not self.is_finished:
+                await asyncio.sleep(1.0)
+                if self.is_finished:
+                    break
+                await self.broadcast_state()
+                await self.check_match_completion()
+        except asyncio.CancelledError:
+            pass
 
-        if not unrevealed:
-            return 0, 0
+    @staticmethod
+    def bot_think(game: MinesweeperGame) -> Tuple[int, int, str]:
+        if game.status == GameStatus.READY:
+            cr = game.rows // 2 + random.randint(-1, 1)
+            cc = game.cols // 2 + random.randint(-1, 1)
+            return max(0, min(cr, game.rows - 1)), max(0, min(cc, game.cols - 1)), "reveal"
 
-        for r in range(self.game.rows):
-            for c in range(self.game.cols):
-                cell = self.game.grid[r][c]
+        for r in range(game.rows):
+            for c in range(game.cols):
+                cell = game.grid[r][c]
                 if cell.is_revealed and cell.adjacent_mines > 0:
-                    neighbors = self.game.get_neighbors(r, c)
-                    unrev_neighbors = [
-                        (nr, nc) for nr, nc in neighbors
-                        if not self.game.grid[nr][nc].is_revealed and not self.game.grid[nr][nc].is_flagged
+                    neighbors = game.get_neighbors(r, c)
+                    unrev = [
+                        (nr, nc)
+                        for nr, nc in neighbors
+                        if not game.grid[nr][nc].is_revealed and not game.grid[nr][nc].is_flagged
                     ]
-                    found_neighbors = [
-                        (nr, nc) for nr, nc in neighbors
-                        if self.game.grid[nr][nc].found_by_player is not None
-                    ]
-                    needed_mines = cell.adjacent_mines - len(found_neighbors)
-                    if len(unrev_neighbors) == needed_mines and needed_mines > 0:
-                        return unrev_neighbors[0]
+                    flagged = [(nr, nc) for nr, nc in neighbors if game.grid[nr][nc].is_flagged]
 
-        return random.choice(unrevealed)
+                    if unrev and len(unrev) + len(flagged) == cell.adjacent_mines:
+                        return unrev[0][0], unrev[0][1], "flag"
+
+                    if unrev and len(flagged) == cell.adjacent_mines:
+                        return unrev[0][0], unrev[0][1], "reveal"
+
+        candidates = []
+        for r in range(game.rows):
+            for c in range(game.cols):
+                cell = game.grid[r][c]
+                if not cell.is_revealed and not cell.is_flagged:
+                    candidates.append((r, c))
+
+        if candidates:
+            safe_guesses = []
+            for r, c in candidates:
+                neighbors = game.get_neighbors(r, c)
+                has_revealed_adj = any(game.grid[nr][nc].is_revealed for nr, nc in neighbors)
+                if not has_revealed_adj:
+                    safe_guesses.append((r, c))
+            if safe_guesses and random.random() < 0.7:
+                chosen = random.choice(safe_guesses)
+            else:
+                chosen = random.choice(candidates)
+            return chosen[0], chosen[1], "reveal"
+
+        return 0, 0, "reveal"
 
 
 class PVPHubServer:
@@ -237,15 +351,17 @@ class PVPHubServer:
                 "type": "match_start",
                 "match_id": match_id,
                 "player_num": 1,
-                "rows": match.game.rows,
-                "cols": match.game.cols,
-                "mines": match.game.total_mines,
+                "rows": match.rows,
+                "cols": match.cols,
+                "mines": match.mines,
                 "opponent_tag": bot.tag,
                 "opponent_nick": bot.nick,
                 "my_tag": client.tag,
                 "my_nick": client.nick,
             })
-            await match.broadcast_state("Game started vs AI Bot!")
+            await match.send_player_state(client, "PVP Race started vs AI Bot!")
+            match.telemetry_task = asyncio.create_task(match.start_telemetry_loop())
+            asyncio.create_task(self.bot_race_loop(match))
 
         elif mtype == "cancel_queue":
             if client in self.waiting_queue:
@@ -256,7 +372,9 @@ class PVPHubServer:
             match = client.match
             if not match or match.is_finished:
                 return
-            if match.game.current_player != client.player_num:
+
+            game = match.get_game(client)
+            if game.status in (GameStatus.WON, GameStatus.LOST):
                 return
 
             action = msg.get("action", "reveal")
@@ -264,23 +382,26 @@ class PVPHubServer:
             c = int(msg.get("c", 0))
 
             if action == "reveal":
-                success, desc = match.game.reveal(r, c)
+                success, desc = game.reveal(r, c)
             elif action == "flag":
-                success, desc = match.game.toggle_flag(r, c)
+                success, desc = game.toggle_flag(r, c)
             elif action == "chord":
-                success, desc = match.game.chord(r, c)
+                success, desc = game.chord(r, c)
             else:
                 return
 
-            await match.broadcast_state(desc)
+            match.last_move_time = time.time()
 
-            if match.game.status == GameStatus.WON:
-                winner = match.game.pvp_winner or "Player 1"
-                await match.end_match(winner)
-                return
+            if game.status == GameStatus.LOST:
+                desc = "💥 BOOM! You detonated a mine! Waiting for opponent..."
+            elif game.status == GameStatus.WON:
+                desc = "🏆 VICTORY! All safe cells cleared! Waiting for opponent..."
 
-            if match.p2.is_bot and match.game.current_player == 2 and not match.is_finished:
-                asyncio.create_task(self.bot_turn(match))
+            await match.send_player_state(client, last_action=desc)
+            opp = match.get_opponent(client)
+            await match.send_player_state(opp)
+
+            await match.check_match_completion()
 
         elif mtype == "cursor":
             match = client.match
@@ -300,20 +421,32 @@ class PVPHubServer:
                 profile = get_pvp_profile(client.tag)
                 await client.send_json({"type": "profile_updated", "profile": profile})
 
-    async def bot_turn(self, match: Match) -> None:
-        await asyncio.sleep(0.6)
-        while match.game.current_player == 2 and not match.is_finished:
-            br, bc = match.bot_think_and_move()
-            await match.p1.send_json({"type": "opponent_cursor", "r": br, "c": bc})
-            await asyncio.sleep(0.3)
-            success, desc = match.game.reveal(br, bc)
-            await match.broadcast_state(f"AI Bot: {desc}")
-            if match.game.status == GameStatus.WON:
-                winner = match.game.pvp_winner or "Player 2"
-                await match.end_match(winner)
+    async def bot_race_loop(self, match: Match) -> None:
+        await asyncio.sleep(1.0)
+        while not match.is_finished:
+            if match.p2_game.status in (GameStatus.WON, GameStatus.LOST):
                 break
-            if match.game.current_player == 2:
-                await asyncio.sleep(0.5)
+
+            await asyncio.sleep(random.uniform(0.6, 1.0))
+
+            if match.is_finished or match.p2_game.status in (GameStatus.WON, GameStatus.LOST):
+                break
+
+            r, c, action = Match.bot_think(match.p2_game)
+            await match.p1.send_json({"type": "opponent_cursor", "r": r, "c": c})
+            await asyncio.sleep(0.15)
+
+            if match.is_finished or match.p2_game.status in (GameStatus.WON, GameStatus.LOST):
+                break
+
+            match.last_move_time = time.time()
+            if action == "flag":
+                match.p2_game.toggle_flag(r, c)
+            else:
+                match.p2_game.reveal(r, c)
+
+            await match.send_player_state(match.p1)
+            await match.check_match_completion()
 
     async def create_match(self, p1: HubClient, p2: HubClient) -> None:
         match_id = uuid.uuid4().hex[:8]
@@ -325,9 +458,9 @@ class PVPHubServer:
             "type": "match_start",
             "match_id": match_id,
             "player_num": 1,
-            "rows": match.game.rows,
-            "cols": match.game.cols,
-            "mines": match.game.total_mines,
+            "rows": match.rows,
+            "cols": match.cols,
+            "mines": match.mines,
             "opponent_tag": p2.tag,
             "opponent_nick": p2.nick,
             "my_tag": p1.tag,
@@ -337,15 +470,16 @@ class PVPHubServer:
             "type": "match_start",
             "match_id": match_id,
             "player_num": 2,
-            "rows": match.game.rows,
-            "cols": match.game.cols,
-            "mines": match.game.total_mines,
+            "rows": match.rows,
+            "cols": match.cols,
+            "mines": match.mines,
             "opponent_tag": p1.tag,
             "opponent_nick": p1.nick,
             "my_tag": p2.tag,
             "my_nick": p2.nick,
         })
-        await match.broadcast_state("Match found! Player 1 goes first.")
+        await match.broadcast_state("PVP Race started! Clear safe cells to score.")
+        match.telemetry_task = asyncio.create_task(match.start_telemetry_loop())
 
     async def handle_disconnect(self, client: HubClient) -> None:
         if client in self.waiting_queue:
@@ -357,10 +491,10 @@ class PVPHubServer:
             winner = f"Player {opp.player_num}"
             await opp.send_json({
                 "type": "opponent_disconnected",
-                "message": f"Opponent ({client.nick}) disconnected! You win by forfeit!",
+                "message": f"Opponent ({client.nick}) disconnected! Victory by forfeit!",
                 "winner": winner,
             })
-            await match.end_match(winner)
+            await match.end_match(winner, opp.nick)
 
         try:
             client.writer.close()

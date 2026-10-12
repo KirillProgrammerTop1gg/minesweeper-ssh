@@ -27,11 +27,12 @@ HELP_TEXT = """
 2. **Intermediate**: 16x16, 40 mines
 3. **Expert**: 16x30, 99 mines
 4. **Custom**: configurable width, height, and mine count
-5. **PVP 1v1 (Minesweeper Flags)**:
-   * 2 players take turns on the board: **Player 1 (Blue)** vs **Player 2 (Red)**.
-   * Uncover a **mine** -> gain +1 point, claim the mine, and **keep your turn**!
-   * Uncover a **safe cell** -> reveals the number and passes the turn to your opponent.
-   * Winner is the player who uncovers the most mines!
+5. **PVP Race (Identical Seeded Map)**:
+   * Both players race concurrently on the **exact same minefield layout**!
+   * No turn waiting: play in real time while tracking opponent live score, time, and status.
+   * **Boom = Elimination**: Click a mine and your run detonates. First-click relocation protects against move-1 deaths.
+   * **Scoring**: Safe cells (+combo), accurate flags (+25), misflag penalty (-10), and clear speed bonus.
+   * Higher total score wins (tiebroken by faster time). Winner claims rank on the leaderboard!
 
 ---
 

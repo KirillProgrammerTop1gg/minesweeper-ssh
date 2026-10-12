@@ -429,11 +429,6 @@ class MinesweeperApp(App):
         def on_match_ready(result: dict | None) -> None:
             if not result:
                 return
-            if result.get("offline_bot"):
-                self.is_networked_pvp = False
-                self.start_new_game(16, 16, 40, "Intermediate", is_pvp=False)
-                self.query_one(CommandBar).show_feedback("Hub offline. Playing solo mode.", is_error=True)
-                return
 
             self.is_networked_pvp = True
             self.local_player_num = result.get("player_num", 1)

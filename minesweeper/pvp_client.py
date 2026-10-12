@@ -66,9 +66,6 @@ class PVPClient:
     async def join_queue(self, tag: str, nick: str) -> None:
         await self.send({"type": "join_queue", "tag": tag, "nick": nick})
 
-    async def play_bot(self) -> None:
-        await self.send({"type": "play_bot"})
-
     async def cancel_queue(self) -> None:
         await self.send({"type": "cancel_queue"})
 

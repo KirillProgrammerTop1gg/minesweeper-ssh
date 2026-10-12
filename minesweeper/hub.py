@@ -26,10 +26,9 @@ class HubClient:
         self.nick: str = "Anonymous"
         self.player_num: int = 1
         self.match: Optional[Match] = None
-        self.is_bot: bool = False
 
     async def send_json(self, data: dict) -> None:
-        if self.is_bot or self.writer.is_closing():
+        if self.writer.is_closing():
             return
         try:
             line = json.dumps(data) + "\n"
@@ -37,18 +36,6 @@ class HubClient:
             await self.writer.drain()
         except Exception:
             pass
-
-
-class BotClient(HubClient):
-    def __init__(self, match: Optional[Match], player_num: int):
-        self.tag = "#BOT0"
-        self.nick = "MinesweeperAI"
-        self.player_num = player_num
-        self.match = match
-        self.is_bot = True
-
-    async def send_json(self, data: dict) -> None:
-        pass
 
 
 class Match:
@@ -119,8 +106,6 @@ class Match:
         return cells_state
 
     async def send_player_state(self, client: HubClient, last_action: str = "") -> None:
-        if client.is_bot:
-            return
         my_game = self.get_game(client)
         opp_game = self.get_opponent_game(client)
         opp_client = self.get_opponent(client)
@@ -288,54 +273,6 @@ class Match:
         except asyncio.CancelledError:
             pass
 
-    @staticmethod
-    def bot_think(game: MinesweeperGame) -> Tuple[int, int, str]:
-        if game.status == GameStatus.READY:
-            cr = game.rows // 2 + random.randint(-1, 1)
-            cc = game.cols // 2 + random.randint(-1, 1)
-            return max(0, min(cr, game.rows - 1)), max(0, min(cc, game.cols - 1)), "reveal"
-
-        for r in range(game.rows):
-            for c in range(game.cols):
-                cell = game.grid[r][c]
-                if cell.is_revealed and cell.adjacent_mines > 0:
-                    neighbors = game.get_neighbors(r, c)
-                    unrev = [
-                        (nr, nc)
-                        for nr, nc in neighbors
-                        if not game.grid[nr][nc].is_revealed and not game.grid[nr][nc].is_flagged
-                    ]
-                    flagged = [(nr, nc) for nr, nc in neighbors if game.grid[nr][nc].is_flagged]
-
-                    if unrev and len(unrev) + len(flagged) == cell.adjacent_mines:
-                        return unrev[0][0], unrev[0][1], "flag"
-
-                    if unrev and len(flagged) == cell.adjacent_mines:
-                        return unrev[0][0], unrev[0][1], "reveal"
-
-        candidates = []
-        for r in range(game.rows):
-            for c in range(game.cols):
-                cell = game.grid[r][c]
-                if not cell.is_revealed and not cell.is_flagged:
-                    candidates.append((r, c))
-
-        if candidates:
-            safe_guesses = []
-            for r, c in candidates:
-                neighbors = game.get_neighbors(r, c)
-                has_revealed_adj = any(game.grid[nr][nc].is_revealed for nr, nc in neighbors)
-                if not has_revealed_adj:
-                    safe_guesses.append((r, c))
-            if safe_guesses and random.random() < 0.7:
-                chosen = random.choice(safe_guesses)
-            else:
-                chosen = random.choice(candidates)
-            return chosen[0], chosen[1], "reveal"
-
-        return 0, 0, "reveal"
-
-
 class PVPHubServer:
     def __init__(self):
         self.waiting_queue: List[HubClient] = []
@@ -385,32 +322,6 @@ class PVPHubServer:
                     "waiting": len(self.waiting_queue),
                     "message": "Searching for opponent online...",
                 })
-
-        elif mtype == "play_bot":
-            if client in self.waiting_queue:
-                self.waiting_queue.remove(client)
-            client.player_num = 1
-            match_id = uuid.uuid4().hex[:8]
-            bot = BotClient(None, 2)
-            match = Match(match_id, client, bot)
-            bot.match = match
-            self.matches[match_id] = match
-
-            await client.send_json({
-                "type": "match_start",
-                "match_id": match_id,
-                "player_num": 1,
-                "rows": match.rows,
-                "cols": match.cols,
-                "mines": match.mines,
-                "opponent_tag": bot.tag,
-                "opponent_nick": bot.nick,
-                "my_tag": client.tag,
-                "my_nick": client.nick,
-            })
-            await match.send_player_state(client, "PVP Race started vs AI Bot!")
-            match.telemetry_task = asyncio.create_task(match.start_telemetry_loop())
-            asyncio.create_task(self.bot_race_loop(match))
 
         elif mtype == "cancel_queue":
             if client in self.waiting_queue:
@@ -479,35 +390,6 @@ class PVPHubServer:
                 update_pvp_nick(client.tag, new_nick)
                 profile = get_pvp_profile(client.tag)
                 await client.send_json({"type": "profile_updated", "profile": profile})
-
-    async def bot_race_loop(self, match: Match) -> None:
-        await asyncio.sleep(1.0)
-        while not match.is_finished:
-            if match.p2_game.status in (GameStatus.WON, GameStatus.LOST):
-                break
-
-            await asyncio.sleep(random.uniform(0.6, 1.0))
-
-            if match.is_finished or match.p2_game.status in (GameStatus.WON, GameStatus.LOST):
-                break
-
-            r, c, action = Match.bot_think(match.p2_game)
-            await match.p1.send_json({"type": "opponent_cursor", "r": r, "c": c})
-            await asyncio.sleep(0.15)
-
-            if match.is_finished or match.p2_game.status in (GameStatus.WON, GameStatus.LOST):
-                break
-
-            now = time.time()
-            match.p2_last_active = now
-            match.last_move_time = now
-            if action == "flag":
-                match.p2_game.toggle_flag(r, c)
-            else:
-                match.p2_game.reveal(r, c)
-
-            await match.send_player_state(match.p1)
-            await match.check_match_completion()
 
     async def create_match(self, p1: HubClient, p2: HubClient) -> None:
         match_id = uuid.uuid4().hex[:8]

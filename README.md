@@ -22,7 +22,6 @@ A clean, modern terminal Minesweeper built with Python and [Textual](https://git
   - **30s Inactivity Timeout**: Automatic Game Over if no action is taken for 30 seconds, complete with live HUD countdown timer (`⏳30s`).
   - **Asynchronous Parallel Racing**: No turn waiting. Both players play independently in real time with live opponent telemetry: score, elapsed time, cells cleared, and current status (`[RACING]`, `[BOOM]`, `[CLEARED]`, `[TIMEOUT]`).
   - **Score & Speed Based Ranking**: Safe cells award combo points, accurate flags award +25 pts (-10 penalty for false flags), and full clear awards speed bonus points. Highest score wins (tiebroken by time).
-  - **AI Practice Bot**: Press `B` in queue to race against an intelligent AI bot in real time.
   - **Client Fingerprint & Ranked Leaderboard**: Permanent win/loss statistics tied to your SSH machine tag (e.g. `#A4E2`). Winners enter their nickname into the Hall of Fame.
 - **Singleplayer Classic**:
   - Classic rules with first-click safety, flood fills, chording (`C`), and high score tracking.

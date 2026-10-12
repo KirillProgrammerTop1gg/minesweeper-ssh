@@ -16,7 +16,6 @@ from minesweeper.pvp_client import PVPClient
 class MatchmakingModal(ModalScreen[Optional[dict]]):
     BINDINGS = [
         Binding("escape", "cancel", "Cancel", show=False),
-        Binding("b", "play_bot", "Play vs Bot", show=False),
     ]
 
     DEFAULT_CSS = """
@@ -24,7 +23,7 @@ class MatchmakingModal(ModalScreen[Optional[dict]]):
         align: center middle;
     }
     #match_dialog {
-        width: 54;
+        width: 50;
         height: auto;
         border: thick $accent;
         background: #0f172a;
@@ -75,7 +74,6 @@ class MatchmakingModal(ModalScreen[Optional[dict]]):
             with Horizontal(id="loading_box"):
                 yield LoadingIndicator()
             with Horizontal(id="match_buttons"):
-                yield Button("Play vs AI Bot (B)", id="btn_bot", variant="warning")
                 yield Button("Cancel (Esc)", id="btn_cancel", variant="error")
 
     async def on_mount(self) -> None:
@@ -86,7 +84,7 @@ class MatchmakingModal(ModalScreen[Optional[dict]]):
             connected = await self.client.connect()
             if not connected:
                 self.query_one("#match_status", Label).update(
-                    "[bold red]Cannot reach PVP Hub![/]\nPress B to play against AI Bot."
+                    "[bold red]Cannot reach PVP Hub![/]\nPlease check your connection."
                 )
                 return
 
@@ -114,27 +112,16 @@ class MatchmakingModal(ModalScreen[Optional[dict]]):
         except Exception:
             pass
 
-    async def action_play_bot(self) -> None:
-        if self.client.connected:
-            await self.client.play_bot()
-        else:
-            self.dismiss({"offline_bot": True})
-
     async def action_cancel(self) -> None:
         if self.client.connected:
             await self.client.cancel_queue()
         self.dismiss(None)
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "btn_bot":
-            await self.action_play_bot()
-        elif event.button.id == "btn_cancel":
+        if event.button.id == "btn_cancel":
             await self.action_cancel()
 
     async def on_key(self, event: events.Key) -> None:
         if event.key == "escape":
             event.stop()
             await self.action_cancel()
-        elif event.key == "b":
-            event.stop()
-            await self.action_play_bot()

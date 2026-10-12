@@ -137,11 +137,11 @@ class StatsBar(Widget):
             if self.game.status in (GameStatus.PLAYING, GameStatus.READY) and not self.match_winner and not self.is_timed_out:
                 time_left = max(0, int(self.timeout_remaining))
                 if time_left > 10:
-                    t.append(f"⏳{time_left}s  ", style="bold #22c55e")
+                    t.append(f"[{time_left}s]  ", style="bold #22c55e")
                 elif time_left > 5:
-                    t.append(f"⏳{time_left}s  ", style="bold #f59e0b")
+                    t.append(f"[{time_left}s]  ", style="bold #f59e0b")
                 else:
-                    t.append(f"⏳{time_left}s! ", style="bold white on #dc2626")
+                    t.append(f"[{time_left}s]! ", style="bold white on #dc2626")
             else:
                 t.append(" ", style="")
 

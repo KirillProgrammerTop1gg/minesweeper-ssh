@@ -182,16 +182,16 @@ class Match:
                 logger.info(f"Match [{self.match_id}]: Player 2 timed out (30s inactivity)")
 
         if p1_timed_out_now:
-            await self.send_player_state(self.p1, last_action="⏱️ Timeout! 30 seconds of inactivity — Game Over!")
-            await self.send_player_state(self.p2, last_action=f"⏱️ {self.p1.nick} timed out (30s inactivity)!")
+            await self.send_player_state(self.p1, last_action="Timeout! 30 seconds of inactivity — Game Over!")
+            await self.send_player_state(self.p2, last_action=f"{self.p1.nick} timed out (30s inactivity)!")
         elif p2_timed_out_now:
-            await self.send_player_state(self.p2, last_action="⏱️ Timeout! 30 seconds of inactivity — Game Over!")
-            await self.send_player_state(self.p1, last_action=f"⏱️ {self.p2.nick} timed out (30s inactivity)!")
+            await self.send_player_state(self.p2, last_action="Timeout! 30 seconds of inactivity — Game Over!")
+            await self.send_player_state(self.p1, last_action=f"{self.p2.nick} timed out (30s inactivity)!")
 
         p1_done = self.p1_game.status in (GameStatus.WON, GameStatus.LOST)
         p2_done = self.p2_game.status in (GameStatus.WON, GameStatus.LOST)
 
-        if p1_done and p2_done:
+        if (self.p1_timed_out or self.p2_timed_out) or (p1_done and p2_done):
             await self._finalize_match()
 
     async def _finalize_match(self) -> None:
@@ -203,22 +203,61 @@ class Match:
         p1_time = self.p1_game.get_elapsed_time()
         p2_time = self.p2_game.get_elapsed_time()
 
-        if p1_score > p2_score:
-            winner = "Player 1"
-            winner_nick = self.p1.nick
-        elif p2_score > p1_score:
-            winner = "Player 2"
-            winner_nick = self.p2.nick
-        else:
-            if p1_time < p2_time:
+        if self.p1_timed_out and self.p2_timed_out:
+            if p1_score > p2_score:
                 winner = "Player 1"
                 winner_nick = self.p1.nick
-            elif p2_time < p1_time:
+            elif p2_score > p1_score:
                 winner = "Player 2"
                 winner_nick = self.p2.nick
             else:
                 winner = "Draw"
                 winner_nick = "Draw"
+        elif self.p1_timed_out and not self.p2_timed_out:
+            if self.p2_game.status == GameStatus.LOST:
+                if p1_score > p2_score:
+                    winner = "Player 1"
+                    winner_nick = self.p1.nick
+                elif p2_score > p1_score:
+                    winner = "Player 2"
+                    winner_nick = self.p2.nick
+                else:
+                    winner = "Player 2"
+                    winner_nick = self.p2.nick
+            else:
+                winner = "Player 2"
+                winner_nick = self.p2.nick
+        elif self.p2_timed_out and not self.p1_timed_out:
+            if self.p1_game.status == GameStatus.LOST:
+                if p2_score > p1_score:
+                    winner = "Player 2"
+                    winner_nick = self.p2.nick
+                elif p1_score > p2_score:
+                    winner = "Player 1"
+                    winner_nick = self.p1.nick
+                else:
+                    winner = "Player 1"
+                    winner_nick = self.p1.nick
+            else:
+                winner = "Player 1"
+                winner_nick = self.p1.nick
+        else:
+            if p1_score > p2_score:
+                winner = "Player 1"
+                winner_nick = self.p1.nick
+            elif p2_score > p1_score:
+                winner = "Player 2"
+                winner_nick = self.p2.nick
+            else:
+                if p1_time < p2_time:
+                    winner = "Player 1"
+                    winner_nick = self.p1.nick
+                elif p2_time < p1_time:
+                    winner = "Player 2"
+                    winner_nick = self.p2.nick
+                else:
+                    winner = "Draw"
+                    winner_nick = "Draw"
 
         await self.end_match(winner, winner_nick)
 
@@ -229,6 +268,8 @@ class Match:
 
         if self.telemetry_task and not self.telemetry_task.done():
             self.telemetry_task.cancel()
+
+        await self.broadcast_state()
 
         p1_score = self.p1_game.score
         p2_score = self.p2_game.score
@@ -272,8 +313,9 @@ class Match:
                 await asyncio.sleep(1.0)
                 if self.is_finished:
                     break
-                await self.broadcast_state()
                 await self.check_match_completion()
+                if not self.is_finished:
+                    await self.broadcast_state()
         except asyncio.CancelledError:
             pass
 
@@ -362,9 +404,9 @@ class PVPHubServer:
             match.last_move_time = now
 
             if game.status == GameStatus.LOST:
-                desc = "💥 BOOM! You detonated a mine! Waiting for opponent..."
+                desc = "BOOM! You detonated a mine! Waiting for opponent..."
             elif game.status == GameStatus.WON:
-                desc = "🏆 VICTORY! All safe cells cleared! Waiting for opponent..."
+                desc = "VICTORY! All safe cells cleared! Waiting for opponent..."
 
             await match.send_player_state(client, last_action=desc)
             opp = match.get_opponent(client)

@@ -245,6 +245,10 @@ class MinesweeperApp(App):
             if self.last_action_time > 0:
                 idle = time.time() - self.last_action_time
                 self.timeout_remaining = max(0, 30 - int(idle))
+                if self.timeout_remaining <= 0 and not self.is_timed_out:
+                    self.is_timed_out = True
+                    self.game.status = GameStatus.LOST
+                    self.show_feedback("Timeout! 30 seconds of inactivity — Game Over.", is_error=True)
             self._sync_stats()
         elif self.game.status == GameStatus.PLAYING:
             self._sync_stats()
@@ -446,11 +450,11 @@ class MinesweeperApp(App):
             if last_action:
                 self.show_feedback(last_action)
             elif self.is_timed_out:
-                self.show_feedback("⏱️ Inactivity timeout (30s)! Game Over.", is_error=True)
+                self.show_feedback("Inactivity timeout (30s)! Game Over.", is_error=True)
             elif self.game.status == GameStatus.LOST:
-                self.show_feedback("💥 You detonated! Waiting for opponent to finish...", is_error=True)
+                self.show_feedback("You detonated! Waiting for opponent to finish...", is_error=True)
             elif self.game.status == GameStatus.WON:
-                self.show_feedback("🎉 Field cleared! Waiting for match result...")
+                self.show_feedback("Field cleared! Waiting for match result...")
 
         elif mtype == "game_over" and self.is_networked_pvp:
             self.match_winner = msg.get("winner")
@@ -478,41 +482,41 @@ class MinesweeperApp(App):
 
             i_won = (self.match_winner == f"Player {self.local_player_num}")
             if self.match_winner == "Draw":
-                title = "🤝 MATCH DRAW! 🤝"
+                title = "MATCH DRAW!"
                 msg_body = f"Final Score: You {my_score} pts vs Opponent {opp_score} pts"
             elif i_won:
-                title = "🏆 VICTORY IN PVP RACE! 🏆"
+                title = "VICTORY IN PVP RACE!"
                 if self.opp_timed_out:
                     msg_body = f"Opponent timed out (30s inactivity)!\nFinal Score: You {my_score} pts vs Opponent {opp_score} pts\nEnter your nickname for the global leaderboard:"
                 else:
                     msg_body = f"Final Score: You {my_score} pts vs Opponent {opp_score} pts\nEnter your nickname for the global leaderboard:"
             else:
-                title = "💥 DEFEAT IN PVP RACE 💥"
+                title = "DEFEAT IN PVP RACE"
                 if self.is_timed_out:
                     msg_body = f"You timed out (30s inactivity)!\nWinner: {winner_nick} ({opp_score} pts vs {my_score} pts)"
                 else:
                     msg_body = f"Winner: {winner_nick} ({opp_score} pts vs {my_score} pts)"
 
-            def on_pvp_name(name: str | None) -> None:
-                if name:
+            def on_pvp_finish(name: str | None) -> None:
+                if i_won and name:
                     self.player_nick = name.strip()
                     update_pvp_nick(self.player_tag, self.player_nick)
                     if self.is_networked_pvp:
                         asyncio.create_task(self.pvp_client.submit_nick(self.player_nick))
-                self.push_screen(LeaderboardModal())
+                if name is not None:
+                    self.push_screen(LeaderboardModal())
 
-            if i_won:
-                self.push_screen(
-                    NamePromptModal(
-                        title,
-                        msg_body,
-                        default_name=self.player_nick,
-                    ),
-                    on_pvp_name,
-                )
-            else:
-                self.show_feedback(msg_body, is_error=True)
-                self.push_screen(LeaderboardModal())
+            self.push_screen(
+                NamePromptModal(
+                    title,
+                    msg_body,
+                    default_name=self.player_nick,
+                    show_input=i_won,
+                    btn_save_text="Save Score" if i_won else "Leaderboard",
+                    btn_cancel_text="Skip (Esc)" if i_won else "Close (Esc)",
+                ),
+                on_pvp_finish,
+            )
 
         elif mtype == "opponent_cursor" and self.is_networked_pvp:
             r = int(msg.get("r", 0))

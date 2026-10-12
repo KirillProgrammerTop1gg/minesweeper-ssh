@@ -47,28 +47,44 @@ class NamePromptModal(ModalScreen[str | None]):
     }
     """
 
-    def __init__(self, title: str, subtitle: str, default_name: str = "Player 1", **kwargs) -> None:
+    def __init__(
+        self,
+        title: str,
+        subtitle: str,
+        default_name: str = "Player 1",
+        show_input: bool = True,
+        btn_save_text: str = "Save Score",
+        btn_cancel_text: str = "Skip (Esc)",
+        **kwargs,
+    ) -> None:
         super().__init__(**kwargs)
         self.dialog_title = title
         self.dialog_subtitle = subtitle
         self.default_name = default_name
+        self.show_input = show_input
+        self.btn_save_text = btn_save_text
+        self.btn_cancel_text = btn_cancel_text
 
     def compose(self) -> ComposeResult:
         with Vertical(id="name_dialog"):
             yield Label(self.dialog_title, id="name_title")
             yield Label(self.dialog_subtitle, id="name_info")
-            yield Input(value=self.default_name, id="name_input")
+            if self.show_input:
+                yield Input(value=self.default_name, id="name_input")
             with Horizontal(id="name_buttons"):
-                yield Button("Save Score", id="btn_save", variant="primary")
-                yield Button("Skip (Esc)", id="btn_skip", variant="default")
+                yield Button(self.btn_save_text, id="btn_save", variant="primary")
+                yield Button(self.btn_cancel_text, id="btn_skip", variant="default")
 
     def action_cancel(self) -> None:
         self.dismiss(None)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn_save":
-            val = self.query_one("#name_input", Input).value.strip() or self.default_name
-            self.dismiss(val)
+            if self.show_input:
+                val = self.query_one("#name_input", Input).value.strip() or self.default_name
+                self.dismiss(val)
+            else:
+                self.dismiss(self.default_name)
         else:
             self.dismiss(None)
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding

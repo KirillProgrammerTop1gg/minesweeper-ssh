@@ -86,6 +86,10 @@ class Match:
         self.p2_cursor = (0, 0)
         self.is_finished = False
         self.last_move_time = time.time()
+        self.p1_last_active = time.time()
+        self.p2_last_active = time.time()
+        self.p1_timed_out = False
+        self.p2_timed_out = False
         self.telemetry_task: Optional[asyncio.Task] = None
 
     def get_game(self, client: HubClient) -> MinesweeperGame:
@@ -121,6 +125,13 @@ class Match:
         opp_game = self.get_opponent_game(client)
         opp_client = self.get_opponent(client)
 
+        now = time.time()
+        p1_idle = now - self.p1_last_active
+        p2_idle = now - self.p2_last_active
+        p1_timeout = max(0, int(30 - p1_idle))
+        p2_timeout = max(0, int(30 - p2_idle))
+        is_p1 = (client == self.p1)
+
         state_msg = {
             "type": "state",
             "cells": self._extract_cells(my_game),
@@ -130,6 +141,8 @@ class Match:
             "my_total_safe": my_game.safe_cells_total,
             "my_flags": my_game.flags_count,
             "my_status": my_game.status.value,
+            "my_timeout": p1_timeout if is_p1 else p2_timeout,
+            "my_timed_out": self.p1_timed_out if is_p1 else self.p2_timed_out,
             "opp_nick": opp_client.nick,
             "opp_tag": opp_client.tag,
             "opp_score": opp_game.score,
@@ -137,6 +150,8 @@ class Match:
             "opp_cleared": opp_game.revealed_count,
             "opp_total_safe": opp_game.safe_cells_total,
             "opp_status": opp_game.status.value,
+            "opp_timeout": p2_timeout if is_p1 else p1_timeout,
+            "opp_timed_out": self.p2_timed_out if is_p1 else self.p1_timed_out,
             "last_action": last_action,
         }
         await client.send_json(state_msg)
@@ -149,14 +164,46 @@ class Match:
         if self.is_finished:
             return
 
+        now = time.time()
+        p1_timed_out_now = False
+        p2_timed_out_now = False
+
+        if (
+            not self.p1_timed_out
+            and self.p1_game.status in (GameStatus.PLAYING, GameStatus.READY)
+            and not self.is_finished
+        ):
+            if now - self.p1_last_active >= 30.0:
+                self.p1_timed_out = True
+                self.p1_game.status = GameStatus.LOST
+                self.p1_game.end_time = now
+                p1_timed_out_now = True
+                logger.info(f"Match [{self.match_id}]: Player 1 timed out (30s inactivity)")
+
+        if (
+            not self.p2_timed_out
+            and self.p2_game.status in (GameStatus.PLAYING, GameStatus.READY)
+            and not self.is_finished
+        ):
+            if now - self.p2_last_active >= 30.0:
+                self.p2_timed_out = True
+                self.p2_game.status = GameStatus.LOST
+                self.p2_game.end_time = now
+                p2_timed_out_now = True
+                logger.info(f"Match [{self.match_id}]: Player 2 timed out (30s inactivity)")
+
+        if p1_timed_out_now:
+            await self.send_player_state(self.p1, last_action="⏱️ Timeout! 30 seconds of inactivity — Game Over!")
+            await self.send_player_state(self.p2, last_action=f"⏱️ {self.p1.nick} timed out (30s inactivity)!")
+        elif p2_timed_out_now:
+            await self.send_player_state(self.p2, last_action="⏱️ Timeout! 30 seconds of inactivity — Game Over!")
+            await self.send_player_state(self.p1, last_action=f"⏱️ {self.p2.nick} timed out (30s inactivity)!")
+
         p1_done = self.p1_game.status in (GameStatus.WON, GameStatus.LOST)
         p2_done = self.p2_game.status in (GameStatus.WON, GameStatus.LOST)
 
         if p1_done and p2_done:
             await self._finalize_match()
-        elif p1_done or p2_done:
-            if time.time() - self.last_move_time > 45.0:
-                await self._finalize_match()
 
     async def _finalize_match(self) -> None:
         if self.is_finished:
@@ -216,11 +263,13 @@ class Match:
             "p1_score": p1_score,
             "p1_time": self.p1_game.get_elapsed_time(),
             "p1_status": self.p1_game.status.value,
+            "p1_timed_out": self.p1_timed_out,
             "p2_nick": self.p2.nick,
             "p2_tag": self.p2.tag,
             "p2_score": p2_score,
             "p2_time": self.p2_game.get_elapsed_time(),
             "p2_status": self.p2_game.status.value,
+            "p2_timed_out": self.p2_timed_out,
         }
         logger.info(
             f"Match ended [{self.match_id}]: Winner {winner_nick} ({p1_score} - {p2_score})"
@@ -390,7 +439,12 @@ class PVPHubServer:
             else:
                 return
 
-            match.last_move_time = time.time()
+            now = time.time()
+            if client == match.p1:
+                match.p1_last_active = now
+            else:
+                match.p2_last_active = now
+            match.last_move_time = now
 
             if game.status == GameStatus.LOST:
                 desc = "💥 BOOM! You detonated a mine! Waiting for opponent..."
@@ -406,6 +460,11 @@ class PVPHubServer:
         elif mtype == "cursor":
             match = client.match
             if match and not match.is_finished:
+                now = time.time()
+                if client == match.p1:
+                    match.p1_last_active = now
+                else:
+                    match.p2_last_active = now
                 opp = match.get_opponent(client)
                 await opp.send_json({
                     "type": "opponent_cursor",
@@ -439,7 +498,9 @@ class PVPHubServer:
             if match.is_finished or match.p2_game.status in (GameStatus.WON, GameStatus.LOST):
                 break
 
-            match.last_move_time = time.time()
+            now = time.time()
+            match.p2_last_active = now
+            match.last_move_time = now
             if action == "flag":
                 match.p2_game.toggle_flag(r, c)
             else:

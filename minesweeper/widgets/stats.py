@@ -34,6 +34,9 @@ class StatsBar(Widget):
         opp_status: str = "READY",
         opp_name: str = "Opponent",
         match_winner: Optional[str] = None,
+        timeout_remaining: int = 30,
+        is_timed_out: bool = False,
+        opp_timed_out: bool = False,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -49,6 +52,9 @@ class StatsBar(Widget):
         self.opp_status = opp_status
         self.opp_name = opp_name
         self.match_winner = match_winner
+        self.timeout_remaining = timeout_remaining
+        self.is_timed_out = is_timed_out
+        self.opp_timed_out = opp_timed_out
 
     def update_stats(
         self,
@@ -64,6 +70,9 @@ class StatsBar(Widget):
         opp_status: str | None = None,
         opp_name: str | None = None,
         match_winner: str | None = None,
+        timeout_remaining: int | None = None,
+        is_timed_out: bool | None = None,
+        opp_timed_out: bool | None = None,
     ) -> None:
         self.game = game
         self.cursor_row = cursor_row
@@ -86,6 +95,12 @@ class StatsBar(Widget):
             self.opp_name = opp_name
         if match_winner is not None:
             self.match_winner = match_winner
+        if timeout_remaining is not None:
+            self.timeout_remaining = timeout_remaining
+        if is_timed_out is not None:
+            self.is_timed_out = is_timed_out
+        if opp_timed_out is not None:
+            self.opp_timed_out = opp_timed_out
         self.refresh(layout=False)
 
     def render(self) -> Text:
@@ -99,6 +114,8 @@ class StatsBar(Widget):
                     t.append(" [VICTORY] ", style="bold white on #16a34a")
                 else:
                     t.append(" [DEFEAT] ", style="bold white on #dc2626")
+            elif self.is_timed_out:
+                t.append(" [TIMEOUT] ", style="bold white on #dc2626")
             elif self.game.status == GameStatus.READY:
                 t.append(" [READY] ", style="bold #94a3b8 on #334155")
             elif self.game.status == GameStatus.PLAYING:
@@ -115,7 +132,18 @@ class StatsBar(Widget):
             t.append(f"({self.game.revealed_count}/{self.game.safe_cells_total}) ", style="bold #f8fafc")
             elapsed = self.game.get_elapsed_time()
             mins, secs = divmod(elapsed, 60)
-            t.append(f"{mins:02d}:{secs:02d}  ", style="bold #38bdf8")
+            t.append(f"{mins:02d}:{secs:02d} ", style="bold #38bdf8")
+
+            if self.game.status in (GameStatus.PLAYING, GameStatus.READY) and not self.match_winner and not self.is_timed_out:
+                time_left = max(0, int(self.timeout_remaining))
+                if time_left > 10:
+                    t.append(f"⏳{time_left}s  ", style="bold #22c55e")
+                elif time_left > 5:
+                    t.append(f"⏳{time_left}s  ", style="bold #f59e0b")
+                else:
+                    t.append(f"⏳{time_left}s! ", style="bold white on #dc2626")
+            else:
+                t.append(" ", style="")
 
             t.append("vs  ", style="dim #94a3b8")
 
@@ -126,7 +154,9 @@ class StatsBar(Widget):
             o_mins, o_secs = divmod(self.opp_time, 60)
             t.append(f"{o_mins:02d}:{o_secs:02d} ", style="bold #38bdf8")
 
-            if self.opp_status == "LOST":
+            if self.opp_timed_out:
+                t.append("[TIMEOUT]  ", style="bold #ef4444")
+            elif self.opp_status == "LOST":
                 t.append("[BOOM]  ", style="bold #ef4444")
             elif self.opp_status == "WON":
                 t.append("[CLEARED]  ", style="bold #22c55e")

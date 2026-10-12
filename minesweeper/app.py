@@ -117,6 +117,10 @@ class MinesweeperApp(App):
         self.opp_status = "READY"
         self.opp_name = "Opponent"
         self.match_winner: Optional[str] = None
+        self.timeout_remaining: int = 30
+        self.is_timed_out: bool = False
+        self.opp_timed_out: bool = False
+        self.last_action_time: float = 0.0
 
         self.game = MinesweeperGame(
             self.current_rows,
@@ -151,6 +155,9 @@ class MinesweeperApp(App):
             opp_status=self.opp_status,
             opp_name=self.opp_name,
             match_winner=self.match_winner,
+            timeout_remaining=self.timeout_remaining,
+            is_timed_out=self.is_timed_out,
+            opp_timed_out=self.opp_timed_out,
             id="stats_bar",
         )
 
@@ -172,7 +179,12 @@ class MinesweeperApp(App):
         self.pvp_client.on_disconnect = self._on_pvp_disconnect
 
     def _on_timer_tick(self) -> None:
-        if self.game.status == GameStatus.PLAYING:
+        if self.is_networked_pvp and self.game.status in (GameStatus.PLAYING, GameStatus.READY) and not self.match_winner:
+            if self.last_action_time > 0:
+                idle = time.time() - self.last_action_time
+                self.timeout_remaining = max(0, 30 - int(idle))
+            self._sync_stats()
+        elif self.game.status == GameStatus.PLAYING:
             self._sync_stats()
 
     def _sync_stats(self) -> None:
@@ -191,6 +203,9 @@ class MinesweeperApp(App):
             opp_status=self.opp_status,
             opp_name=self.opp_name,
             match_winner=self.match_winner,
+            timeout_remaining=self.timeout_remaining,
+            is_timed_out=self.is_timed_out,
+            opp_timed_out=self.opp_timed_out,
         )
 
     def start_new_game(
@@ -208,6 +223,10 @@ class MinesweeperApp(App):
         self.opp_status = "READY"
         self.opp_name = "Opponent"
         self.match_winner = None
+        self.timeout_remaining = 30
+        self.is_timed_out = False
+        self.opp_timed_out = False
+        self.last_action_time = 0.0
         self.current_rows = rows
         self.current_cols = cols
         self.current_mines = mines
@@ -240,6 +259,10 @@ class MinesweeperApp(App):
         self.opp_cleared = 0
         self.opp_status = "READY"
         self.match_winner = None
+        self.timeout_remaining = 30
+        self.is_timed_out = False
+        self.opp_timed_out = False
+        self.last_action_time = time.time()
 
         self.game = MinesweeperGame(rows, cols, mines, "PVP Race", is_pvp=True)
         container = self.query_one("#board_container", ScrollableContainer)
@@ -283,6 +306,10 @@ class MinesweeperApp(App):
             if self.game.status in (GameStatus.WON, GameStatus.LOST) and self.game.start_time is not None and self.game.end_time is None:
                 self.game.end_time = self.game.start_time + my_time
 
+            self.timeout_remaining = msg.get("my_timeout", self.timeout_remaining)
+            self.is_timed_out = msg.get("my_timed_out", self.is_timed_out)
+            self.opp_timed_out = msg.get("opp_timed_out", self.opp_timed_out)
+
             self.opp_name = msg.get("opp_nick") or self.opp_name
             self.opp_score = msg.get("opp_score", self.opp_score)
             self.opp_time = msg.get("opp_time", self.opp_time)
@@ -296,6 +323,8 @@ class MinesweeperApp(App):
             last_action = msg.get("last_action", "")
             if last_action:
                 self.query_one(CommandBar).show_feedback(last_action)
+            elif self.is_timed_out:
+                self.query_one(CommandBar).show_feedback("⏱️ Inactivity timeout (30s)! Game Over.", is_error=True)
             elif self.game.status == GameStatus.LOST:
                 self.query_one(CommandBar).show_feedback("💥 You detonated! Waiting for opponent to finish...", is_error=True)
             elif self.game.status == GameStatus.WON:
@@ -308,6 +337,13 @@ class MinesweeperApp(App):
             my_score = p1_score if self.local_player_num == 1 else p2_score
             opp_score = p2_score if self.local_player_num == 1 else p1_score
             winner_nick = msg.get("winner_nick", "")
+
+            if self.local_player_num == 1:
+                self.is_timed_out = msg.get("p1_timed_out", self.is_timed_out)
+                self.opp_timed_out = msg.get("p2_timed_out", self.opp_timed_out)
+            else:
+                self.is_timed_out = msg.get("p2_timed_out", self.is_timed_out)
+                self.opp_timed_out = msg.get("p1_timed_out", self.opp_timed_out)
 
             self._sync_stats()
             self.query_one(BoardWidget).refresh(layout=False)
@@ -322,10 +358,16 @@ class MinesweeperApp(App):
                 msg_body = f"Final Score: You {my_score} pts vs Opponent {opp_score} pts"
             elif i_won:
                 title = "🏆 VICTORY IN PVP RACE! 🏆"
-                msg_body = f"Final Score: You {my_score} pts vs Opponent {opp_score} pts\nEnter your nickname for the global leaderboard:"
+                if self.opp_timed_out:
+                    msg_body = f"Opponent timed out (30s inactivity)!\nFinal Score: You {my_score} pts vs Opponent {opp_score} pts\nEnter your nickname for the global leaderboard:"
+                else:
+                    msg_body = f"Final Score: You {my_score} pts vs Opponent {opp_score} pts\nEnter your nickname for the global leaderboard:"
             else:
                 title = "💥 DEFEAT IN PVP RACE 💥"
-                msg_body = f"Winner: {winner_nick} ({opp_score} pts vs {my_score} pts)"
+                if self.is_timed_out:
+                    msg_body = f"You timed out (30s inactivity)!\nWinner: {winner_nick} ({opp_score} pts vs {my_score} pts)"
+                else:
+                    msg_body = f"Winner: {winner_nick} ({opp_score} pts vs {my_score} pts)"
 
             def on_pvp_name(name: str | None) -> None:
                 if name:
@@ -457,14 +499,18 @@ class MinesweeperApp(App):
             self.action_show_help()
 
     def on_board_widget_cursor_moved(self, event: BoardWidget.CursorMoved) -> None:
-        self._sync_stats()
         if self.is_networked_pvp:
+            self.last_action_time = time.time()
+            self.timeout_remaining = 30
             asyncio.create_task(self.pvp_client.send_cursor(event.row, event.col))
+        self._sync_stats()
 
     def on_board_widget_action_triggered(self, event: BoardWidget.ActionTriggered) -> None:
         if self.is_networked_pvp:
             if self.game.status in (GameStatus.WON, GameStatus.LOST):
                 return
+            self.last_action_time = time.time()
+            self.timeout_remaining = 30
             asyncio.create_task(
                 self.pvp_client.send_move(event.action, event.row, event.col)
             )
@@ -489,6 +535,8 @@ class MinesweeperApp(App):
         if self.is_networked_pvp:
             if self.game.status in (GameStatus.WON, GameStatus.LOST):
                 return
+            self.last_action_time = time.time()
+            self.timeout_remaining = 30
             asyncio.create_task(
                 self.pvp_client.send_move(event.action, target_r, target_c)
             )

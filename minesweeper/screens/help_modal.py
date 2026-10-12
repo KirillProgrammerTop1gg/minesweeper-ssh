@@ -30,6 +30,7 @@ HELP_TEXT = """
 5. **PVP Race (Identical Seeded Map)**:
    * Both players race concurrently on the **exact same minefield layout**!
    * No turn waiting: play in real time while tracking opponent live score, time, and status.
+   * **30s Inactivity Timeout**: Taking no action for 30 seconds triggers an automatic Game Over.
    * **Boom = Elimination**: Click a mine and your run detonates. First-click relocation protects against move-1 deaths.
    * **Scoring**: Safe cells (+combo), accurate flags (+25), misflag penalty (-10), and clear speed bonus.
    * Higher total score wins (tiebroken by faster time). Winner claims rank on the leaderboard!

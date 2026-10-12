@@ -19,7 +19,8 @@ A clean, modern terminal Minesweeper built with Python and [Textual](https://git
 - **Real-time Ranked PVP Race**:
   - **Identical Seeded Map**: Both players are spawned onto the exact same minefield layout with identical mine placements.
   - **Classic Elimination**: Hitting a mine causes instant detonation and run loss (`[DETONATED]`). First-click mine relocation guarantees a safe opening move.
-  - **Asynchronous Parallel Racing**: No turn waiting. Both players play independently in real time with live opponent telemetry: score, elapsed time, cells cleared, and current status (`[RACING]`, `[BOOM]`, `[CLEARED]`).
+  - **30s Inactivity Timeout**: Automatic Game Over if no action is taken for 30 seconds, complete with live HUD countdown timer (`⏳30s`).
+  - **Asynchronous Parallel Racing**: No turn waiting. Both players play independently in real time with live opponent telemetry: score, elapsed time, cells cleared, and current status (`[RACING]`, `[BOOM]`, `[CLEARED]`, `[TIMEOUT]`).
   - **Score & Speed Based Ranking**: Safe cells award combo points, accurate flags award +25 pts (-10 penalty for false flags), and full clear awards speed bonus points. Highest score wins (tiebroken by time).
   - **AI Practice Bot**: Press `B` in queue to race against an intelligent AI bot in real time.
   - **Client Fingerprint & Ranked Leaderboard**: Permanent win/loss statistics tied to your SSH machine tag (e.g. `#A4E2`). Winners enter their nickname into the Hall of Fame.

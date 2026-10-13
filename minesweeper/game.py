@@ -221,6 +221,10 @@ class MinesweeperGame:
             return max(0, int(self.end_time - self.start_time))
         return max(0, int(time.time() - self.start_time))
 
+    @property
+    def elapsed_time(self) -> int:
+        return self.get_elapsed_time()
+
     def get_remaining_mines(self) -> int:
         return self.total_mines - self.flags_count
 

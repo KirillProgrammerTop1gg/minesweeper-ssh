@@ -675,7 +675,7 @@ class MinesweeperApp(App):
 
         if self.game.status == GameStatus.WON:
             self._score_saved = True
-            elapsed = int(self.game.elapsed_time)
+            elapsed = self.game.get_elapsed_time()
             score = self.game.score
 
             def on_name_entered(name: str | None) -> None:

@@ -114,15 +114,15 @@ class BoardWidget(Widget):
     def flag_current(self) -> None:
         if self.game.status in (GameStatus.WON, GameStatus.LOST):
             return
-        cell = self.game.grid[self.cursor_row][self.cursor_col]
-        if not cell.is_revealed:
-            cell.is_flagged = not cell.is_flagged
-            if cell.is_flagged:
-                self.game.flags_count += 1
-            else:
-                self.game.flags_count = max(0, self.game.flags_count - 1)
-            self.refresh(layout=False)
         if self.is_networked_pvp:
+            cell = self.game.grid[self.cursor_row][self.cursor_col]
+            if not cell.is_revealed:
+                cell.is_flagged = not cell.is_flagged
+                if cell.is_flagged:
+                    self.game.flags_count += 1
+                else:
+                    self.game.flags_count = max(0, self.game.flags_count - 1)
+                self.refresh(layout=False)
             self.post_message(self.ActionTriggered("flag", self.cursor_row, self.cursor_col, ""))
             return
         success, msg = self.game.toggle_flag(self.cursor_row, self.cursor_col)

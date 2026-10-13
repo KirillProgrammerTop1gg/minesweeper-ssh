@@ -27,7 +27,60 @@ from minesweeper.widgets.command_bar import CommandBar
 from minesweeper.widgets.stats import StatsBar
 
 
+def _patch_textual_linux_driver() -> None:
+    """Monkey-patch Textual's LinuxDriver to cleanly exit on EOF/disconnect,
+    preventing 100% CPU infinite loops on closed SSH/terminal sessions."""
+    try:
+        import os
+        import selectors
+        from codecs import getincrementaldecoder
+        import textual.drivers.linux_driver as ld
+        from textual._xterm_parser import XTermParser
+
+        if getattr(ld.LinuxDriver, "_eof_patched", False):
+            return
+
+        def run_input_thread(self: ld.LinuxDriver) -> None:
+            selector = selectors.SelectSelector()
+            selector.register(self.fileno, selectors.EVENT_READ)
+            fileno = self.fileno
+            EVENT_READ = selectors.EVENT_READ
+            parser = XTermParser(self._debug)
+            feed = parser.feed
+            tick = parser.tick
+            decode = getincrementaldecoder("utf-8")().decode
+
+            try:
+                while not self.exit_event.is_set():
+                    events = selector.select(0.1)
+                    for _key, mask in events:
+                        if mask & EVENT_READ:
+                            try:
+                                raw = os.read(fileno, 4096)
+                            except OSError:
+                                raw = b""
+                            if not raw:
+                                # Client disconnected or terminal closed
+                                self._app.call_later(self._app.exit)
+                                return
+                            for event in feed(decode(raw)):
+                                self.process_message(event)
+                    for event in tick():
+                        self.process_message(event)
+            finally:
+                selector.close()
+
+        ld.LinuxDriver.run_input_thread = run_input_thread
+        ld.LinuxDriver._eof_patched = True
+    except Exception:
+        pass
+
+
+_patch_textual_linux_driver()
+
+
 class MinesweeperApp(App):
+
     TITLE = "Minesweeper"
     SUB_TITLE = "Chess Coordinates • Pacman Navigation • Real-time Ranked PVP"
 

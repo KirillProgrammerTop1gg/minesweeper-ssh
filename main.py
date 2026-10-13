@@ -68,6 +68,18 @@ Examples:
             print("\nSSH server stopped.")
         return
 
+    if not args.hub and not args.ssh:
+        if not sys.stdin.isatty():
+            sys.stderr.write("Interactive terminal (TTY) required.\n")
+            sys.exit(1)
+
+        import signal
+        try:
+            signal.signal(signal.SIGHUP, lambda *_: sys.exit(0))
+            signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+        except (AttributeError, ValueError):
+            pass
+
     app = MinesweeperApp()
     if args.difficulty != "beginner":
         cfg = DIFFICULTIES[args.difficulty]
@@ -82,3 +94,4 @@ Examples:
 
 if __name__ == "__main__":
     main()
+

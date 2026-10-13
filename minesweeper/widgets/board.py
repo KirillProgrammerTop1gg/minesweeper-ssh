@@ -234,7 +234,7 @@ class BoardWidget(Widget):
                     style = "bold white on #b91c1c" if is_cursor else "bold #ffffff on #dc2626"
                 elif is_cursor:
                     if cell.is_flagged:
-                        cell_str = "[⚑]"
+                        cell_str = "[F]"
                         style = "bold white on #be123c"
                     elif cell.is_detonated:
                         cell_str = "[*]"
@@ -257,7 +257,7 @@ class BoardWidget(Widget):
                 elif is_opp_cursor:
                     opp_color = "#dc2626" if self.local_player_num == 1 else "#2563eb"
                     if cell.is_flagged:
-                        cell_str = "(⚑)"
+                        cell_str = "(F)"
                         style = f"bold white on {opp_color}"
                     elif cell.is_false_flag:
                         cell_str = "(X)"
@@ -276,7 +276,7 @@ class BoardWidget(Widget):
                         style = f"bold white on {opp_color}"
                 else:
                     if cell.is_flagged:
-                        cell_str = " ⚑ "
+                        cell_str = " F "
                         style = "bold #f43f5e"
                     elif cell.is_detonated:
                         cell_str = " * "

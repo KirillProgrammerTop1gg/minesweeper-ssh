@@ -235,7 +235,7 @@ class BoardWidget(Widget):
                 elif is_cursor:
                     if cell.is_flagged:
                         cell_str = "[F]"
-                        style = "bold white on #be123c"
+                        style = "bold #0f172a on #facc15"
                     elif cell.is_detonated:
                         cell_str = "[*]"
                         style = "bold white on #b91c1c"
@@ -277,7 +277,7 @@ class BoardWidget(Widget):
                 else:
                     if cell.is_flagged:
                         cell_str = " F "
-                        style = "bold #f43f5e"
+                        style = "bold #facc15 on #422006"
                     elif cell.is_detonated:
                         cell_str = " * "
                         style = "bold white on #dc2626"

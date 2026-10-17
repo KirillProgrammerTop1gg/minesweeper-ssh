@@ -1,12 +1,25 @@
 # Minesweeper Terminal & SSH
 
-Play without installing anything:
+## Download Executables (No Python Required)
+
+Standalone executables and ZIP archives are included directly in the [`releases/`](releases/) folder and on the **[GitHub Releases](https://github.com/KirillProgrammerTop1gg/minesweeper-ssh/releases/latest)** page:
+
+- **Linux (x86_64) ZIP**: [`releases/minesweeper-linux-x86_64.zip`](releases/minesweeper-linux-x86_64.zip) (or direct binary: [`releases/minesweeper`](releases/minesweeper))
+- **Windows / macOS / Linux Releases**: [Download from GitHub Releases (v1.0.0)](https://github.com/KirillProgrammerTop1gg/minesweeper-ssh/releases/tag/v1.0.0)
+
+```bash
+# Run the standalone executable directly in your terminal:
+chmod +x ./minesweeper
+./minesweeper
+```
+
+Or play instantly over SSH without downloading anything:
 
 ```bash
 ssh -p 5822 play@minesweeper-ssh.duckdns.org
 ```
 
-Minesweeper for the terminal, written in Python with [Textual](https://github.com/Textualize/textual). It runs locally or over SSH, and has a ranked PvP mode.
+Minesweeper for the terminal, written in Python with [Textual](https://github.com/Textualize/textual). It runs locally as a standalone executable, from source, or over SSH, and features a ranked real-time PvP mode.
 
 
 ![Screenshot](screenshot.svg)
